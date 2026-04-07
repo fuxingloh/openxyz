@@ -15,7 +15,7 @@
       },
     },
     "packages/opendev": {
-      "name": "opendev",
+      "name": "openxyz",
       "version": "0.0.0",
       "bin": "bin.js",
       "dependencies": {
@@ -25,6 +25,16 @@
       "peerDependencies": {
         "@ai-sdk/provider": "^3",
         "ai": "^6",
+      },
+    },
+    "templates/opendev-assistant": {
+      "name": "@templates/openxyz-assistant",
+      "dependencies": {
+        "openxyz": "^0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1",
+        "typescript": "^6",
       },
     },
   },
@@ -42,6 +52,8 @@
     "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
+
+    "@templates/openxyz-assistant": ["@templates/openxyz-assistant@workspace:templates/opendev-assistant"],
 
     "@turbo/darwin-64": ["@turbo/darwin-64@2.9.4", "", { "os": "darwin", "cpu": "x64" }, "sha512-ZSlPqJ5Vqg/wgVw8P3AOVCIosnbBilOxLq7TMz3MN/9U46DUYfdG2jtfevNDufyxyrg98pcPs/GBgDRaaids6g=="],
 
@@ -119,7 +131,7 @@
 
     "onetime": ["onetime@7.0.0", "", { "dependencies": { "mimic-function": "^5.0.0" } }, "sha512-VXJjc87FScF88uafS3JllDgvAm+c/Slfz06lorj2uAY34rlUu0Nt+v8wreiImcrgAjjIHp1rXpTDlLOGw29WwQ=="],
 
-    "opendev": ["opendev@workspace:packages/opendev"],
+    "openxyz": ["openxyz@workspace:packages/opendev"],
 
     "path-key": ["path-key@3.1.1", "", {}, "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q=="],
 
