@@ -1,0 +1,23 @@
+{
+  "name": "opendev",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "fuxingloh",
+  "type": "module",
+  "bin": "bin.js",
+  "files": [
+    "**/*.ts",
+    "**/*.tsx",
+    "docs/**",
+    "templates/**"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "peerDependencies": {
+    "@ai-sdk/provider": "^3",
+    "ai": "^6"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
