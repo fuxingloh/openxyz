@@ -1,15 +1,26 @@
 {
-  "name": "@templates/openxyz-chief-of-staff",
+  "name": "openxyz-chief-of-staff",
   "private": true,
+  "description": "Chief of Staff used by OpenXyz Team to build this project.",
   "scripts": {
     "build": "openxyz build",
     "start": "openxyz start"
   },
   "dependencies": {
+    "@chat-adapter/state-memory": "^4",
+    "@chat-adapter/telegram": "^4",
+    "chat": "^4",
     "openxyz": "^0"
   },
   "devDependencies": {
-    "@types/bun": "^1",
     "typescript": "^6"
+  },
+  "permissions": {
+    "*": false,
+    "agents/*": false,
+    "sessions/*": false,
+    "skills/*": false,
+    "tools/*": false,
+    "package.json": false
   }
 }

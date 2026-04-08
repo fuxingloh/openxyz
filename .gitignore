@@ -9,7 +9,7 @@ node_modules
 /.pnp
 .pnp.js
 .yarn*
-pnpm-lock.yaml
+bun.lock
 
 # testing
 /coverage

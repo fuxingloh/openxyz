@@ -12,10 +12,17 @@
     "templates/**"
   ],
   "dependencies": {
+    "@chat-adapter/telegram": "^4.24.0",
     "@opencode-ai/plugin": "^1.3.17",
-    "@opencode-ai/sdk": "^1.3.17"
+    "@opencode-ai/sdk": "^1.3.17",
+    "chat": "^4.24.0",
+    "commander": "^14.0.3",
+    "opencode-ai": "^1.3.17",
+    "zod": "^4"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "^24"
+  },
   "peerDependencies": {
     "@ai-sdk/provider": "^3",
     "ai": "^6"
