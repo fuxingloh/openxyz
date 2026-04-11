@@ -1,5 +1,0 @@
-packages:
-  - "packages/*"
-  - "templates/*"
-ignoredBuiltDependencies:
-  - sharp

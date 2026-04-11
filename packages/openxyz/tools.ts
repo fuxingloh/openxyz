@@ -1,1 +1,2 @@
-export { tool } from "@opencode-ai/plugin";
+export { tool } from "ai";
+export { z } from "zod";

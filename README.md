@@ -1,3 +1,3 @@
-# OpenXyz (OpenDev)
+# OpenXyz
 
 Playground
