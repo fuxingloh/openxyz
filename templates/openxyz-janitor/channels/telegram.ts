@@ -1,3 +1,3 @@
-import { createTelegramAdapter } from "@chat-adapter/telegram";
+import { telegram } from "openxyz/channels";
 
-export default createTelegramAdapter();
+export default telegram();
