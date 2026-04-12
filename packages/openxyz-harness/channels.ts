@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 export interface ChannelEntry {
   adapter: unknown;
+  agent: string;
   allowlist: Set<string> | undefined;
 }
 
@@ -19,6 +20,7 @@ export async function scanChannels(cwd: string): Promise<Record<string, ChannelE
     }
     channels[name] = {
       adapter: mod.default,
+      agent: mod.agent ?? "general",
       allowlist: mod.allowlist ? new Set(mod.allowlist) : undefined,
     };
   }
