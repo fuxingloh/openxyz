@@ -120,6 +120,7 @@ my-template/
 | 22  | Harness throws if no channels found at startup (no transports = no purpose, revisit when REPL/cron/headless lands) | `working/027`                   |
 | 23  | Tool names are `snake_case` (`web_fetch`, `web_search`); single-word tools already conform                         | `working/028`                   |
 | 24  | `skill`, `web_fetch`, `web_search` tools + custom tool loading from `cwd/tools/`; skills fully contained           | `working/029`                   |
+| 25  | Env declarations via `Symbol.for("openxyz.env")` — wrappers attach, harness logs at startup, fails on missing      | `working/031`                   |
 
 ## Patterns to learn from
 
