@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`working/032`)
 - [ ] Context compaction — skip for v1, implement when hitting 200K+ limits (`working/032`)
 - [ ] Tool output pruning — prune old tool outputs between turns to save context (`working/032`)
-- [ ] MCP support — connect external tool servers via Model Context Protocol (`working/037`)
+- [ ] **MCP support — connect external tool servers via Model Context Protocol (`working/037`) [HIGH PRIORITY]**
 - [ ] Permission system — allow/deny/ask rules per agent/session, beyond channel allowlists (`working/037`)
 - [ ] Retry with `Retry-After` header parsing — AI SDK's `maxRetries` doesn't handle this (`working/037`)
 - [ ] Session persistence — swap `state-memory` for a persistent chat-sdk adapter (`working/037`)
@@ -26,6 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] `HEARTBEAT.md` periodic tasks — needs cron/scheduler mechanism, defer to v2 (`working/039`)
 - [ ] Validate agent frontmatter at scan time — error if tool/skill name doesn't exist (`working/038`)
 - [ ] VFS permissions for just-bash — sandboxed filesystem access per agent (`working/038`)
+- [ ] Per-agent reasoning controls — `reasoning:` in frontmatter, maps to `providerOptions` (`working/040`)
 - [ ] Agent model override — `model:` field in frontmatter, needs provider routing (`working/038`)
 
 ## What OpenXyz is
