@@ -11,7 +11,7 @@ import type { Tool } from "ai";
 
 export class OpenXyzHarness {
   readonly cwd: string;
-  #agent?: ReturnType<typeof createAgent>;
+  #agent?: Awaited<ReturnType<typeof createAgent>>;
   #chat?: Chat;
   #channels: Record<string, { adapter: unknown; allowlist: Set<string> | undefined }> = {};
 
@@ -21,7 +21,7 @@ export class OpenXyzHarness {
 
   async start(): Promise<void> {
     const [tools, channels] = await Promise.all([this.#loadTools(), this.#loadChannels()]);
-    this.#agent = createAgent(tools);
+    this.#agent = await createAgent(this.cwd, tools);
     this.#channels = channels;
 
     const adapters = Object.fromEntries(Object.entries(channels).map(([k, v]) => [k, v.adapter]));
