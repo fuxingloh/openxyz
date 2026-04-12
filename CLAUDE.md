@@ -249,6 +249,7 @@ Read these first for deep context on any topic.
 ### Env and config
 
 - **035** — Env: `readEnv` with Zod (supersedes 031 — immediate validation, no registry, no envalid)
+- **036** — System prompt structure and caching (`instructions` as `Array<SystemModelMessage>`, stable prefix + dynamic tail)
 
 ### Historical context (read when investigating prior art)
 

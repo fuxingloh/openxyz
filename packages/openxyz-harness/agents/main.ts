@@ -12,32 +12,21 @@ const zen = createOpenAICompatible({
   baseURL: "https://opencode.ai/zen/v1",
 });
 
-async function buildPrompt(cwd: string): Promise<string> {
+async function buildInstructions(cwd: string) {
+  // Static base prompt — cacheable
   const parts = [basePrompt];
-
   const agentsFile = Bun.file(join(cwd, "AGENTS.md"));
   if (await agentsFile.exists()) {
     parts.push("## Project Instructions\n\n" + (await agentsFile.text()).trim());
   }
-
-  parts.push(
-    [
-      "## Environment",
-      "",
-      `- Date: ${new Date().toISOString().split("T")[0]}`,
-      `- Platform: ${process.platform}`,
-      `- Working directory: ${cwd}`,
-    ].join("\n"),
-  );
-
   return parts.join("\n\n");
 }
 
 export async function create(cwd: string, tools: Record<string, Tool>) {
-  const instructions = await buildPrompt(cwd);
+  const instructions = await buildInstructions(cwd);
   return new ToolLoopAgent({
     model: zen("big-pickle"),
-    instructions,
+    instructions: { role: "system" as const, content: instructions },
     tools,
   });
 }

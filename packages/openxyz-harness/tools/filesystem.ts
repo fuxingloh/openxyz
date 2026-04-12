@@ -1,20 +1,22 @@
+import { basename } from "node:path";
 import { Bash, MountableFs, ReadWriteFs } from "just-bash";
 import { tool } from "ai";
 import { z } from "zod";
 
 const MAX_BYTES = 50_000;
-const DEFAULT_CWD = "/home/openxyz";
 
 export class Filesystem {
   readonly cwd: string;
+  readonly #home: string;
   readonly #bash: Bash;
 
   constructor(cwd: string) {
     this.cwd = cwd;
+    this.#home = `/home/${basename(cwd)}`;
     const fs = new MountableFs({
-      mounts: [{ mountPoint: DEFAULT_CWD, filesystem: new ReadWriteFs({ root: cwd }) }],
+      mounts: [{ mountPoint: this.#home, filesystem: new ReadWriteFs({ root: cwd }) }],
     });
-    this.#bash = new Bash({ fs, cwd: DEFAULT_CWD, python: true, javascript: true });
+    this.#bash = new Bash({ fs, cwd: this.#home, python: true, javascript: true });
   }
 
   tools() {
@@ -43,13 +45,13 @@ export class Filesystem {
         ].join("\n"),
         inputSchema: z.object({
           command: z.string().describe("The bash command to execute."),
-          workdir: z.string().optional().describe("Working directory. Defaults to /home/openxyz."),
+          workdir: z.string().describe("Working directory for the command."),
           timeout: z.number().optional().describe("Timeout in milliseconds. Defaults to 120000 (2 minutes)."),
           description: z.string().describe("Clear 5-10 word description of what the command does."),
         }),
         execute: async ({ command, workdir, timeout }) => {
           const res = await shell.exec(command, {
-            cwd: workdir ?? DEFAULT_CWD,
+            cwd: workdir,
             signal: AbortSignal.timeout(timeout ?? 120_000),
           });
           const out = [res.stdout, res.stderr].filter(Boolean).join("\n");
@@ -88,7 +90,7 @@ export class Filesystem {
         }),
         execute: async ({ path, content }) => {
           const parent = path.slice(0, path.lastIndexOf("/"));
-          if (parent && parent !== "") await shell.exec(`mkdir -p "${parent}"`, { cwd: DEFAULT_CWD });
+          if (parent && parent !== "") await shell.exec(`mkdir -p "${parent}"`, { cwd: this.#home });
           await shell.writeFile(path, content);
           return `wrote ${content.length} bytes to ${path}`;
         },
@@ -131,7 +133,7 @@ export class Filesystem {
           cwd: z.string().optional().describe("Directory to search under. Defaults to /home/openxyz."),
         }),
         execute: async ({ pattern, cwd }) => {
-          const res = await shell.exec(`find . -type f -name "${pattern}"`, { cwd: cwd ?? DEFAULT_CWD });
+          const res = await shell.exec(`find . -type f -name "${pattern}"`, { cwd: cwd ?? this.#home });
           const out = res.stdout.trim();
           return out || "(no matches)";
         },
@@ -146,7 +148,7 @@ export class Filesystem {
         }),
         execute: async ({ pattern, path, glob }) => {
           const include = glob ? `--include="${glob}"` : "";
-          const res = await shell.exec(`grep -rnE ${include} -- "${pattern}" .`, { cwd: path ?? DEFAULT_CWD });
+          const res = await shell.exec(`grep -rnE ${include} -- "${pattern}" .`, { cwd: path ?? this.#home });
           const out = res.stdout.trim();
           return out || "(no matches)";
         },

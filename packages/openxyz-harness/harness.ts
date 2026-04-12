@@ -1,6 +1,7 @@
 import { Chat, toAiMessages } from "chat";
 import type { Thread } from "chat";
 import { createMemoryState } from "@chat-adapter/state-memory";
+import { basename } from "node:path";
 import { scanChannels } from "./channels";
 import { Filesystem } from "./tools/filesystem";
 import { web_fetch, web_search } from "./tools/web";
@@ -81,7 +82,17 @@ export class OpenXyzHarness {
     await thread.startTyping();
     const fetched = await thread.adapter.fetchMessages(thread.id, { limit: 20 });
     const history = await toAiMessages(fetched.messages);
-    const result = await this.#agent!.stream({ prompt: history });
+    const env = {
+      role: "system" as const,
+      content: [
+        "## Environment",
+        "",
+        `- Date: ${new Date().toISOString().split("T")[0]}`,
+        `- Home: /home/${basename(this.cwd)}`,
+        // TODO: list mounted /mnt/* paths when VFS mounts are implemented
+      ].join("\n"),
+    };
+    const result = await this.#agent!.stream({ prompt: [env, ...history] });
     try {
       await thread.post(result.fullStream);
     } catch {
