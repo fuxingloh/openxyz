@@ -19,7 +19,7 @@ export class Filesystem {
     this.#bash = new Bash({ fs, cwd: this.#home, python: true, javascript: true });
   }
 
-  tools() {
+  tools(): Record<string, Tool> {
     const shell = this.#bash;
 
     return {
@@ -27,10 +27,10 @@ export class Filesystem {
         description: [
           "Executes a bash command in a sandboxed shell with optional timeout.",
           "",
-          "All commands run in /home/openxyz (your workspace) by default. Use `workdir` to run in a different directory. Prefer `workdir` over `cd <dir> && <command>`.",
+          `All commands run in ${this.#home} (your workspace) by default. Use \`workdir\` to run in a different directory. Prefer \`workdir\` over \`cd <dir> && <command>\`.`,
           "",
           "Layout:",
-          "  /home/openxyz/   — your workspace (tools, skills, channels, agents, documents)",
+          `  ${this.#home}/   — your workspace (tools, skills, channels, agents, documents)`,
           "  /mnt/<name>/     — mounted backends (e.g. gdrive, notion)",
           "",
           "Prefer the purpose-built filesystem tools (`read`, `write`, `edit`, `glob`, `grep`) over bash when the task fits one of them — they return structured output and are cheaper. Reach for `bash` when you need a real shell: piping, scripts, installed binaries, archive handling, process inspection.",
@@ -63,7 +63,7 @@ export class Filesystem {
       read: tool({
         description: "Read a file from your workspace or a mounted backend. Returns line-numbered content.",
         inputSchema: z.object({
-          path: z.string().describe("Absolute path, e.g. /home/openxyz/notes.md."),
+          path: z.string().describe(`Absolute path, e.g. ${this.#home}/agents/research.ts.`),
           offset: z.number().optional().describe("Line number to start reading from (1-indexed). Defaults to 1."),
           limit: z.number().optional().describe("Maximum number of lines to return. Defaults to 2000."),
         }),
@@ -130,10 +130,10 @@ export class Filesystem {
           pattern: z
             .string()
             .describe("Glob pattern like '**/*.md' or '*.ts'. Matches against file names, not full paths."),
-          cwd: z.string().optional().describe("Directory to search under. Defaults to /home/openxyz."),
+          cwd: z.string().describe(`Absolute directory path to search under, e.g. ${this.#home}.`),
         }),
         execute: async ({ pattern, cwd }) => {
-          const res = await shell.exec(`find . -type f -name "${pattern}"`, { cwd: cwd ?? this.#home });
+          const res = await shell.exec(`find . -type f -name "${pattern}"`, { cwd });
           const out = res.stdout.trim();
           return out || "(no matches)";
         },
@@ -143,12 +143,12 @@ export class Filesystem {
         description: "Search file contents for a regex pattern. Returns {file}:{line}:{match} lines.",
         inputSchema: z.object({
           pattern: z.string().describe("Extended regex pattern to search for."),
-          path: z.string().optional().describe("Directory to search under. Defaults to /home/openxyz."),
+          path: z.string().describe(`Absolute directory path to search under, e.g. ${this.#home}.`),
           glob: z.string().optional().describe("Filter files by glob, e.g. '*.md'. Optional."),
         }),
         execute: async ({ pattern, path, glob }) => {
           const include = glob ? `--include="${glob}"` : "";
-          const res = await shell.exec(`grep -rnE ${include} -- "${pattern}" .`, { cwd: path ?? this.#home });
+          const res = await shell.exec(`grep -rnE ${include} -- "${pattern}" .`, { cwd: path });
           const out = res.stdout.trim();
           return out || "(no matches)";
         },
