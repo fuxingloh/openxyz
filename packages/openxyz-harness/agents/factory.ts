@@ -74,7 +74,7 @@ export class AgentFactory {
   readonly #cwd: string;
   readonly #home: string;
   #skills: SkillInfo[] = [];
-  #custom: Record<string, Tool> = {};
+  #customTools: Record<string, Tool> = {};
   #defs: Record<string, AgentDef> = {};
 
   constructor(cwd: string) {
@@ -84,14 +84,14 @@ export class AgentFactory {
 
   async init(): Promise<void> {
     const customDir = join(this.#cwd, "agents");
-    const [skills, custom, defaults, overrides] = await Promise.all([
+    const [skills, customTools, defaults, overrides] = await Promise.all([
       scanSkills(this.#cwd),
       scanTools(this.#cwd),
       scanDir(DEFAULTS_DIR),
       existsSync(customDir) ? scanDir(customDir) : {},
     ]);
     this.#skills = skills;
-    this.#custom = custom;
+    this.#customTools = customTools;
     this.#defs = { ...defaults, ...overrides };
   }
 
@@ -116,14 +116,13 @@ export class AgentFactory {
   }
 
   #loadTools(def: AgentDef): Record<string, Tool> {
-    const fsConfig = def.filesystem;
-    const fs = new FilesystemTools(this.#cwd, fsConfig);
+    const fs = new FilesystemTools(this.#cwd, def.filesystem);
     const all: Record<string, Tool> = {
       ...fs.tools(),
       web_fetch,
       web_search,
       skill: createSkillTool(this.#filterSkills(def)),
-      ...this.#custom,
+      ...this.#customTools,
     };
 
     if (!def.tools) return all;

@@ -39,25 +39,9 @@ export async function scanSkills(cwd: string): Promise<SkillInfo[]> {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatSkillList(skills: SkillInfo[]): string {
-  if (skills.length === 0) return "No skills are currently available.";
-  return ["## Available Skills", ...skills.map((s) => `- **${s.name}**: ${s.description}`)].join("\n");
-}
-
 export function createSkillTool(skills: SkillInfo[]) {
-  const description =
-    skills.length === 0
-      ? "Load a specialized skill. No skills are currently available."
-      : [
-          "Load a specialized skill that provides domain-specific instructions and workflows.",
-          "",
-          "When you recognize that a task matches one of the available skills, use this tool to load the full skill instructions.",
-          "",
-          formatSkillList(skills),
-        ].join("\n");
-
   return tool({
-    description,
+    description: "Load a skill by name. Available skills are listed in the system prompt.",
     inputSchema: z.object({
       name: z.string().describe("The name of the skill from available skills."),
     }),
