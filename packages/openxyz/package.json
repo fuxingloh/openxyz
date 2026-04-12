@@ -9,6 +9,8 @@
     "commands",
     "tools.ts",
     "channels.ts",
+    "env.ts",
+    "zod.ts",
     "tsconfig.json"
   ],
   "dependencies": {
