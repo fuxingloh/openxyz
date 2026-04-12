@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Open work
+
+- [ ] Inject skill info into system prompt so the agent proactively loads skills (`working/033`)
+- [ ] Load agents from `agents/*.md` in templates — frontmatter config + body as system prompt (`working/034`)
+- [ ] Implement `task` tool for spawning subagents with restricted tools (`working/034`)
+- [ ] Add LLM prompt caching (`applyCaching` on system/user messages) — free perf win (`working/032`)
+- [ ] File upstream issue on vercel/chat for Telegram MarkdownV2 entity escaping
+- [ ] End-to-end test: `cd templates/openxyz-janitor && bun start` with real Telegram bot
+- [ ] `mode: "polling"` default for `openxyz/channels.telegram()` — stale webhooks cause silent failures
+- [ ] Model configurability — `big-pickle` hardcoded in `agents/main.ts`, should be template config
+- [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`working/032`)
+- [ ] Context compaction — skip for v1, implement when hitting 200K+ limits (`working/032`)
+- [ ] Tool output pruning — prune old tool outputs between turns to save context (`working/032`)
+
 ## What OpenXyz is
 
 OpenXyz is an AI agent harness for human workflows — **not** a coding tool. A platform for building personal assistants (chief-of-staff, janitor, researcher) that a user talks to through multiple channels (Telegram, terminal, more later) backed by one shared AI agent session. The AI lives in a virtual filesystem it can self-modify (write its own tools, skills, agents, channels).
@@ -227,6 +241,9 @@ Read these first for deep context on any topic.
 - **013** — Architecture patterns from opencode (what to look at)
 - **014** — Code style guide from opencode (how to write code)
 - **028** — Claude Code + opencode tool surface comparison (what tools exist, what we adopted, what's next)
+- **032** — Compaction, LLM caching, and subagents (opencode research — future implementation reference)
+- **033** — Skill auto-loading (why agent doesn't use skills, dual-injection fix)
+- **034** — Agent loading from `agents/*.md` + task tool for subagents (opencode research)
 
 ### Historical context (read when investigating prior art)
 
