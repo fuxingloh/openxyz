@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Open work
 
-- [ ] Inject skill info into system prompt so the agent proactively loads skills (`working/033`)
+- [x] Inject skill info into system prompt so the agent proactively loads skills (`working/033`)
 - [ ] Load agents from `agents/*.md` in templates — frontmatter config + body as system prompt (`working/034`)
 - [ ] Implement `task` tool for spawning subagents with restricted tools (`working/034`)
 - [ ] Add LLM prompt caching (`applyCaching` on system/user messages) — free perf win (`working/032`)
@@ -15,6 +15,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`working/032`)
 - [ ] Context compaction — skip for v1, implement when hitting 200K+ limits (`working/032`)
 - [ ] Tool output pruning — prune old tool outputs between turns to save context (`working/032`)
+- [ ] MCP support — connect external tool servers via Model Context Protocol (`working/037`)
+- [ ] Permission system — allow/deny/ask rules per agent/session, beyond channel allowlists (`working/037`)
+- [ ] Retry with `Retry-After` header parsing — AI SDK's `maxRetries` doesn't handle this (`working/037`)
+- [ ] Session persistence — swap `state-memory` for a persistent chat-sdk adapter (`working/037`)
+- [ ] Load `USER.md` into system prompt — user context (name, timezone, preferences) (`working/039`)
+- [ ] Load `MEMORY.md` into system prompt — curated long-term memory (`working/039`)
+- [ ] Load `TOOLS.md` into system prompt — env-specific tool notes (`working/039`)
+- [ ] `BOOTSTRAP.md` first-run ritual — load, run, delete after completion (`working/039`)
+- [ ] `HEARTBEAT.md` periodic tasks — needs cron/scheduler mechanism, defer to v2 (`working/039`)
 
 ## What OpenXyz is
 
@@ -250,6 +259,9 @@ Read these first for deep context on any topic.
 
 - **035** — Env: `readEnv` with Zod (supersedes 031 — immediate validation, no registry, no envalid)
 - **036** — System prompt structure and caching (`instructions` as `Array<SystemModelMessage>`, stable prefix + dynamic tail)
+- **037** — Opencode feature survey (MCP, permissions, retry, session persistence, plugins)
+- **038** — Task tool implementation plan (subagent spawning, agent scanner, tool filtering)
+- **039** — Workspace files pattern from openclaw (USER.md, MEMORY.md, TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md)
 
 ### Historical context (read when investigating prior art)
 

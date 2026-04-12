@@ -21,8 +21,8 @@ export class OpenXyzHarness {
   }
 
   async start(): Promise<void> {
-    const [tools, channels] = await Promise.all([this.#loadTools(), this.#loadChannels()]);
-    this.#agent = await createAgent(this.cwd, tools);
+    const [{ tools, skills }, channels] = await Promise.all([this.#loadTools(), this.#loadChannels()]);
+    this.#agent = await createAgent(this.cwd, tools, skills);
     this.#channels = channels;
 
     const adapters = Object.fromEntries(Object.entries(channels).map(([k, v]) => [k, v.adapter]));
@@ -48,17 +48,19 @@ export class OpenXyzHarness {
     await chat.initialize();
   }
 
-  async #loadTools(): Promise<Record<string, Tool>> {
+  async #loadTools() {
     const fs = new Filesystem(this.cwd);
     const [skills, custom] = await Promise.all([scanSkills(this.cwd), scanTools(this.cwd)]);
 
-    return {
+    const tools: Record<string, Tool> = {
       ...fs.tools(),
       web_fetch,
       web_search,
       skill: createSkillTool(skills),
       ...custom,
     };
+
+    return { tools, skills };
   }
 
   async #loadChannels() {
