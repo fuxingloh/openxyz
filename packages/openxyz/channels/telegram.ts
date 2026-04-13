@@ -1,8 +1,7 @@
 import { createTelegramAdapter, type TelegramAdapterConfig } from "@chat-adapter/telegram";
 import type { Message } from "chat";
 
-export { Should } from "@openxyz/harness/channels";
-export type { MessageContext, ShouldFn } from "@openxyz/harness/channels";
+export type { MessageContext, ShouldRespondFn } from "@openxyz/harness/channels";
 
 export type TelegramConfig = TelegramAdapterConfig & {
   botToken: string;
