@@ -275,6 +275,7 @@ Read these first for deep context on any topic.
 - **051** — Channel wrapper Proxy pattern (idiomatic chat-sdk adapter wrapping; platform logic stays in channel file)
 - **052** — XML tag conventions (canonical `<reply_to>`, `<forwarded>`, `<quote>` tags for chat semantics)
 - **053** — Agent model + reasoning config (nested `model: { id, reasoning }` frontmatter design, per-provider mapping for low/medium/high)
+- **054** — Auto-compaction refresh + memory module (deferred — why 1000-message cap is enough today, what to build when summary drift becomes real)
 
 ### Patterns to learn from
 
