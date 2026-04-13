@@ -18,7 +18,7 @@ export enum Should {
 export interface MessageContext<TState = Record<string, unknown>> {
   thread: Thread<TState>;
   message: Message;
-  channel: Channel<TState>;
+  channel?: Channel<TState>;
 }
 
 export type ShouldFn = (ctx: MessageContext) => Should | Promise<Should>;

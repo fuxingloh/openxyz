@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] `mode: "polling"` default for `openxyz/channels.telegram()` — stale webhooks cause silent failures
 - [ ] Model configurability — `big-pickle` hardcoded in `agents/main.ts`, should be template config
 - [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`working/032`)
-- [ ] Context compaction — skip for v1, implement when hitting 200K+ limits (`working/032`)
+- [x] Context compaction — `compact.md` agent + threshold-based fire in `#reply` (`working/042`)
 - [ ] Tool output pruning — prune old tool outputs between turns to save context (`working/032`)
 - [ ] **MCP support — connect external tool servers via Model Context Protocol (`working/037`) [HIGH PRIORITY]**
 - [ ] Permission system — allow/deny/ask rules per agent/session, beyond channel allowlists (`working/037`)
