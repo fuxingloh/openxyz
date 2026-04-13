@@ -24,8 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] `HEARTBEAT.md` periodic tasks — needs cron/scheduler mechanism, defer to v2 (`working/039`)
 - [ ] Validate agent frontmatter at scan time — error if tool/skill name doesn't exist (`working/038`)
 - [ ] VFS permissions for just-bash — sandboxed filesystem access per agent (`working/038`)
-- [ ] Per-agent reasoning controls — `reasoning:` in frontmatter, maps to `providerOptions` (`working/040`)
-- [ ] Agent model override — `model:` field in frontmatter, needs provider routing (`working/038`)
+- [ ] Agent model + reasoning config — nested `model: { id, reasoning }` in frontmatter, shorthand string fallback, per-provider mapping (`working/053`)
 - [ ] Group chat handling — mention-based trigger, author attribution, "lurk unless addressed" prompt (`working/050`)
 
 ## What OpenXyz is
@@ -275,6 +274,7 @@ Read these first for deep context on any topic.
 - **050** — Group chat handling (mention gating, author attribution, openclaw research)
 - **051** — Channel wrapper Proxy pattern (idiomatic chat-sdk adapter wrapping; platform logic stays in channel file)
 - **052** — XML tag conventions (canonical `<reply_to>`, `<forwarded>`, `<quote>` tags for chat semantics)
+- **053** — Agent model + reasoning config (nested `model: { id, reasoning }` frontmatter design, per-provider mapping for low/medium/high)
 
 ### Patterns to learn from
 
