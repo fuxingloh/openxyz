@@ -1,14 +1,12 @@
 import { join } from "node:path";
 import type { Thread, Message, Channel } from "chat";
 
-export interface Summary {
-  text: string;
-  upToMessageId: string;
-}
-
-export interface ThreadState {
-  summary?: Summary;
-}
+export type ThreadState = {
+  summary?: {
+    text: string;
+    upToMessageId: string;
+  };
+};
 
 export interface MessageContext {
   thread: Thread<ThreadState>;
