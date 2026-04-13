@@ -13,9 +13,9 @@
     "tsconfig.json"
   ],
   "dependencies": {
-    "@chat-adapter/telegram": "^4.24.0",
+    "@chat-adapter/telegram": "4.25.0",
     "@openxyz/harness": "workspace:*",
-    "chat": "^4.24.0",
+    "chat": "4.25.0",
     "commander": "^14.0.3",
     "zod": "^4"
   },
