@@ -1,0 +1,205 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -226,15 +226,24 @@
+ /**
+  * Telegram format conversion.
+  *
+- * Telegram supports Markdown/HTML parse modes, but to avoid
+- * platform-specific escaping pitfalls this adapter emits normalized
+- * markdown text as plain message text.
++ * Telegram's `MarkdownV2` parse mode requires every occurrence of the
++ * reserved characters `_ * [ ] ( ) ~ ` > # + - = | { } . !` to be
++ * escaped with a preceding `\` outside of formatting entities. The
++ * plain markdown produced by `remark-stringify` does not satisfy this
++ * rule, which made Telegram reject messages that contained perfectly
++ * ordinary punctuation (periods, parentheses, dashes, pipes, …).
++ *
++ * This converter walks the mdast AST directly and emits MarkdownV2
++ * with context-aware escaping so the resulting string is always safe
++ * to send with `parse_mode: "MarkdownV2"`.
+  */
+ 
+ declare class TelegramFormatConverter extends BaseFormatConverter {
+     fromAst(ast: Root): string;
+     toAst(text: string): Root;
+     renderPostable(message: AdapterPostableMessage): string;
++    private nodeToMarkdownV2;
++    private renderMarkdownV2List;
+ }
+ 
+ type TelegramRuntimeMode = "webhook" | "polling";
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -113,32 +113,47 @@
+ // src/markdown.ts
+ import {
+   BaseFormatConverter,
++  getNodeChildren,
++  isBlockquoteNode,
++  isCodeNode,
++  isDeleteNode,
++  isEmphasisNode,
++  isInlineCodeNode,
++  isLinkNode,
++  isListNode,
++  isParagraphNode,
++  isStrongNode,
+   isTableNode,
++  isTextNode,
+   parseMarkdown,
+-  stringifyMarkdown,
+-  tableToAscii,
+-  walkAst
++  tableToAscii
+ } from "chat";
++var MARKDOWN_V2_RESERVED = /[_*[\]()~`>#+\-=|{}.!]/g;
++var MARKDOWN_V2_CODE_RESERVED = /[`\\]/g;
++var MARKDOWN_V2_LINK_URL_RESERVED = /[)\\]/g;
++function escapeText(text) {
++  return text.replace(/\\/g, "\\\\").replace(MARKDOWN_V2_RESERVED, (char) => `\\${char}`);
++}
++function escapeCode(text) {
++  return text.replace(MARKDOWN_V2_CODE_RESERVED, (char) => `\\${char}`);
++}
++function escapeLinkUrl(url) {
++  return url.replace(MARKDOWN_V2_LINK_URL_RESERVED, (char) => `\\${char}`);
++}
+ var TelegramFormatConverter = class extends BaseFormatConverter {
+   fromAst(ast) {
+-    const transformed = walkAst(structuredClone(ast), (node) => {
+-      if (isTableNode(node)) {
+-        return {
+-          type: "code",
+-          value: tableToAscii(node),
+-          lang: void 0
+-        };
+-      }
+-      return node;
+-    });
+-    return stringifyMarkdown(transformed).trim();
++    const parts = [];
++    for (const node of ast.children) {
++      parts.push(this.nodeToMarkdownV2(node));
++    }
++    return parts.join("\n\n").trim();
+   }
+   toAst(text) {
+     return parseMarkdown(text);
+   }
+   renderPostable(message) {
+     if (typeof message === "string") {
+-      return message;
++      return escapeText(message);
+     }
+     if ("raw" in message) {
+       return message.raw;
+@@ -150,7 +165,98 @@
+       return this.fromAst(message.ast);
+     }
+     return super.renderPostable(message);
++  }
++  nodeToMarkdownV2(node) {
++    if (isParagraphNode(node)) {
++      return getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++    }
++    if (isTextNode(node)) {
++      return escapeText(node.value);
++    }
++    if (isStrongNode(node)) {
++      const content = getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++      return `*${content}*`;
++    }
++    if (isEmphasisNode(node)) {
++      const content = getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++      return `_${content}_`;
++    }
++    if (isDeleteNode(node)) {
++      const content = getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++      return `~${content}~`;
++    }
++    if (isInlineCodeNode(node)) {
++      return `\`${escapeCode(node.value)}\``;
++    }
++    if (isCodeNode(node)) {
++      const lang = node.lang ?? "";
++      return `\`\`\`${lang}
++${escapeCode(node.value)}
++\`\`\``;
++    }
++    if (isLinkNode(node)) {
++      const linkText = getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++      return `[${linkText}](${escapeLinkUrl(node.url)})`;
++    }
++    if (isBlockquoteNode(node)) {
++      return getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("\n").split("\n").map((line) => `>${line}`).join("\n");
++    }
++    if (isListNode(node)) {
++      return this.renderMarkdownV2List(node, 0);
++    }
++    if (node.type === "break") {
++      return "\n";
++    }
++    if (node.type === "thematicBreak") {
++      return "\\-\\-\\-";
++    }
++    if (isTableNode(node)) {
++      return `\`\`\`
++${escapeCode(tableToAscii(node))}
++\`\`\``;
++    }
++    if (node.type === "heading") {
++      const content = getNodeChildren(node).map((child) => this.nodeToMarkdownV2(child)).join("");
++      return `*${content}*`;
++    }
++    return escapeText(
++      this.defaultNodeToText(node, (child) => {
++        if (isTextNode(child)) {
++          return child.value;
++        }
++        return this.defaultNodeToText(child, () => "");
++      })
++    );
+   }
++  renderMarkdownV2List(node, depth) {
++    if (!isListNode(node)) {
++      return "";
++    }
++    const indent = "  ".repeat(depth);
++    const start = node.start ?? 1;
++    const lines = [];
++    for (const [i, item] of getNodeChildren(node).entries()) {
++      const prefix = node.ordered ? `${start + i}\\.` : "\\-";
++      let isFirstContent = true;
++      for (const child of getNodeChildren(item)) {
++        if (isListNode(child)) {
++          lines.push(this.renderMarkdownV2List(child, depth + 1));
++          continue;
++        }
++        const rendered = this.nodeToMarkdownV2(child);
++        if (!rendered.trim()) {
++          continue;
++        }
++        if (isFirstContent) {
++          lines.push(`${indent}${prefix} ${rendered}`);
++          isFirstContent = false;
++        } else {
++          lines.push(`${indent}  ${rendered}`);
++        }
++      }
++    }
++    return lines.join("\n");
++  }
+ };
+ 
+ // src/index.ts
+@@ -159,7 +265,7 @@
+ var TELEGRAM_CAPTION_LIMIT = 1024;
+ var TELEGRAM_SECRET_TOKEN_HEADER = "x-telegram-bot-api-secret-token";
+ var MESSAGE_ID_PATTERN = /^([^:]+):(\d+)$/;
+-var TELEGRAM_MARKDOWN_PARSE_MODE = "Markdown";
++var TELEGRAM_MARKDOWN_PARSE_MODE = "MarkdownV2";
+ var trimTrailingSlashes = (url) => {
+   let end = url.length;
+   while (end > 0 && url[end - 1] === "/") {
