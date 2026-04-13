@@ -1,10 +1,19 @@
 import { join } from "node:path";
 import type { Thread, Message, Channel } from "chat";
 
-export interface MessageContext<TState = Record<string, unknown>> {
-  thread: Thread<TState>;
+export interface Summary {
+  text: string;
+  upToMessageId: string;
+}
+
+export interface ThreadState {
+  summary?: Summary;
+}
+
+export interface MessageContext {
+  thread: Thread<ThreadState>;
   message: Message;
-  channel?: Channel<TState>;
+  channel?: Channel;
 }
 
 export type ShouldRespondFn = (ctx: MessageContext) => boolean | Promise<boolean>;
