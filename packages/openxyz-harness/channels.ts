@@ -13,7 +13,18 @@ export type Thread = ChatThread<{
 export type Message = ChatMessage;
 
 export type Action = {
-  reply: boolean;
+  /**
+   * What agent to route to for this action.
+   * Undefined = do nothing.
+   */
+  agent?: string;
+  /**
+   * Whether to start the "typing indicator".
+   */
+  typing?: string | boolean;
+  /**
+   * Whether to add a reaction to the user's message.
+   */
   reaction?: string;
 };
 
@@ -25,7 +36,6 @@ export type HandleFn = (thread: Thread, message: Message) => Respond;
  * Representation of a channel file within the OpenXyz harness.
  */
 export type ChannelFile = {
-  agent: string;
   adapter: ChatAdapter;
   handle: (thread: Thread, message: Message) => Promise<Action>;
 };
@@ -46,7 +56,6 @@ export async function scanChannels(cwd: string): Promise<Record<string, ChannelF
     }
 
     channels[name] = {
-      agent: mod.agent ?? "general",
       adapter: mod.default,
       handle: newHandler(mod.handle, file),
     };
@@ -77,27 +86,26 @@ function newHandler(handle: HandleFn, file: string): (thread: Thread, message: M
       return defaultAction(thread, message);
     }
 
-    return {
-      reply: false,
-    };
+    return {};
   };
 }
 
 function defaultAction(thread: Thread, message: Message): Action {
   if (thread.isDM) {
     return {
-      reply: true,
+      agent: "general",
+      typing: true,
     };
   }
 
   if (message.isMention) {
     return {
-      reply: true,
+      agent: "general",
+      typing: true,
       reaction: "👀",
     };
   }
 
-  return {
-    reply: false,
-  };
+  // Default is doing nothing.
+  return {};
 }
