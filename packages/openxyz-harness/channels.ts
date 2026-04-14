@@ -33,6 +33,12 @@ export type ChannelFile<Raw = unknown> = {
    */
   adapter: Adapter;
   /**
+   * Dynamic environment frame — prepended fresh on every reply, not cached.
+   * Use for values that change per-request (current datetime, thread name, etc.).
+   * Return lines; the harness joins with `\n` and wraps into a system message.
+   */
+  environment: (thread: Thread, message: Message<Raw>) => Promise<string[]>;
+  /**
    * Prepare context for the message (e.g. summarize, etc.).
    *
    * To override in `channels/name.ts`:
@@ -77,6 +83,7 @@ function newChannelFile(mod: any, filename: string): ChannelFile {
   return {
     adapter: file.adapter,
     // TODO(?): mod.context allow `export function context() {}`
+    environment: file.environment,
     context: file.context,
     reply: mapReplyFunc(mod, filename),
   };

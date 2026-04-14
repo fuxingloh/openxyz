@@ -81,8 +81,11 @@ export class OpenXyz {
     if (!reply.agent) return;
 
     const agent = await this.agentFactory.create(reply.agent);
-    const context = await channel.context(thread, message);
-    const result = await agent.stream({ prompt: context });
+    const [env, context] = await Promise.all([channel.environment(thread, message), channel.context(thread, message)]);
+    const prompt = env.length > 0 ? [...context, { role: "system" as const, content: env.join("\n") }] : context;
+    const result = await agent.stream({
+      prompt: prompt,
+    });
     await thread.post(result.fullStream);
   }
 

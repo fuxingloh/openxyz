@@ -55,6 +55,12 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
 
   return {
     adapter,
+    environment: async (thread: Thread, _message: Message<TelegramRaw>) => {
+      return [
+        `Current datetime: ${new Date().toISOString()}`,
+        thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`,
+      ];
+    },
     context: async (thread: Thread, _message: Message<TelegramRaw>) => {
       // Telegram "threads" are forum topics — a supergroup splits into many.
       // `thread.channel.messages` iterates newest-first across every topic,
