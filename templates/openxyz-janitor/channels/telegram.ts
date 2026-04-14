@@ -12,7 +12,7 @@ const allowlist = readEnv("TELEGRAM_ALLOWLIST", {
   schema: z.string().transform((s) => new Set(s.split(",").map((v) => v.trim()))),
 });
 
-export function action(thread: Thread, message: Message<TelegramRaw>) {
+export function reply(thread: Thread, message: Message<TelegramRaw>) {
   if (!allowlist.has(message.author.userId)) return false;
   // In groups, only respond when addressed — @-mentioned or replying to the bot.
   if (!thread.isDM && !message.isMention && !isReplyToBot(thread, message)) return false;

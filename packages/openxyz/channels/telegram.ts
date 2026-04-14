@@ -2,7 +2,7 @@ import { createTelegramAdapter, type TelegramAdapterConfig, type TelegramRawMess
 import { type AiMessage, type AiMessagePart, type Message, toAiMessages } from "chat";
 import type { ChannelFile, Thread } from "@openxyz/harness/channels";
 
-export type { Thread, Message, Action } from "@openxyz/harness/channels";
+export type { Thread, Message, ReplyAction } from "@openxyz/harness/channels";
 
 export type TelegramConfig = TelegramAdapterConfig & {
   botToken: string;
@@ -70,10 +70,10 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
       });
     },
     /**
-     * Default action if no `export function action` is provided in the channel file.
-     * Also used when `export function action() { return true }`, true -> uses this.
+     * Default reply if no `export function reply` is provided in the channel file.
+     * Also used when `export function reply() { return true }`, true -> uses this.
      */
-    async action(thread: Thread, message: Message<TelegramRaw>) {
+    async reply(thread: Thread, message: Message<TelegramRaw>) {
       if (thread.isDM) {
         return { agent: "general", typing: true };
       }

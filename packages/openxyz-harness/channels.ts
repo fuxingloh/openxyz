@@ -8,9 +8,9 @@ export type Thread = ChatThread<{
 
 export type Message<Raw = unknown> = ChatMessage<Raw>;
 
-export type Action = {
+export type ReplyAction = {
   /**
-   * What agent to route to for this action.
+   * What agent to route to for this reply.
    * Undefined = do nothing.
    */
   agent?: string;
@@ -44,12 +44,12 @@ export type ChannelFile<Raw = unknown> = {
    */
   context: (thread: Thread, message: Message<Raw>) => Promise<ModelMessage[]>;
   /**
-   * Action to take when a message is received.
-   * If returns `true`, uses default action.
+   * Reply to take when a message is received.
+   * If returns `true`, uses default reply.
    * If returns `false`, does nothing.
-   * If returns `Action`, uses that action.
+   * If returns `ReplyAction`, uses that reply.
    */
-  action: (thread: Thread, message: Message<Raw>) => Promise<Action>;
+  reply: (thread: Thread, message: Message<Raw>) => Promise<ReplyAction>;
 };
 
 export async function scanChannelFiles(cwd: string): Promise<Record<string, ChannelFile>> {
@@ -78,32 +78,35 @@ function newChannelFile(mod: any, filename: string): ChannelFile {
     adapter: file.adapter,
     // TODO(?): mod.context allow `export function context() {}`
     context: file.context,
-    action: mapActionFunc(mod, filename),
+    reply: mapReplyFunc(mod, filename),
   };
 }
 
-export type ActionFunc = (thread: Thread, message: Message) => boolean | Promise<boolean> | Action | Promise<Action>;
+export type ReplyFunc = (
+  thread: Thread,
+  message: Message,
+) => boolean | Promise<boolean> | ReplyAction | Promise<ReplyAction>;
 
-function mapActionFunc(mod: any, filename: string): ChannelFile["action"] {
+function mapReplyFunc(mod: any, filename: string): ChannelFile["reply"] {
   const file = mod.default as ChannelFile;
-  if (mod.action === undefined) {
-    console.warn(`[openxyz] channels/${filename} has no export function action, using default handler.`);
-    return file.action;
+  if (mod.reply === undefined) {
+    console.warn(`[openxyz] channels/${filename} has no export function reply, using default handler.`);
+    return file.reply;
   }
 
-  const func: ActionFunc = mod.action;
+  const func: ReplyFunc = mod.reply;
   if (typeof func !== "function") {
-    throw new Error(`[openxyz] channels/${filename} handle export is not a function`);
+    throw new Error(`[openxyz] channels/${filename} reply export is not a function`);
   }
 
-  return async (thread: Thread, message: Message): Promise<Action> => {
-    const booleanOrAction = await func(thread, message);
-    if (typeof booleanOrAction === "boolean") {
-      if (booleanOrAction) {
-        return file.action(thread, message);
+  return async (thread: Thread, message: Message): Promise<ReplyAction> => {
+    const booleanOrReply = await func(thread, message);
+    if (typeof booleanOrReply === "boolean") {
+      if (booleanOrReply) {
+        return file.reply(thread, message);
       }
       return {};
     }
-    return booleanOrAction;
+    return booleanOrReply;
   };
 }

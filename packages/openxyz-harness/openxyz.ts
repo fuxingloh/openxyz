@@ -47,7 +47,7 @@ export class OpenXyz {
       this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
     });
     // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
-    // (typically random group chatter). Channel `action()` decides whether to
+    // (typically random group chatter). Channel `reply()` decides whether to
     // engage; returning `{}` stays silent.
     chat.onNewMessage(/.+/, (thread, message) => {
       this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
@@ -65,22 +65,22 @@ export class OpenXyz {
       throw new Error(`[openxyz] received message for adapter "${thread.adapter.name}" but no channel config found`);
     }
 
-    const action = await channel.action(thread, message);
+    const reply = await channel.reply(thread, message);
 
-    if (action.typing) {
-      const status = typeof action.typing === "string" ? action.typing : undefined;
+    if (reply.typing) {
+      const status = typeof reply.typing === "string" ? reply.typing : undefined;
       thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
     }
 
-    if (action.reaction) {
+    if (reply.reaction) {
       thread.adapter
-        .addReaction(thread.id, message.id, action.reaction)
+        .addReaction(thread.id, message.id, reply.reaction)
         .catch((err) => console.warn("[openxyz] addReaction failed", err));
     }
 
-    if (!action.agent) return;
+    if (!reply.agent) return;
 
-    const agent = await this.agentFactory.create(action.agent);
+    const agent = await this.agentFactory.create(reply.agent);
     const context = await channel.context(thread, message);
     const result = await agent.stream({ prompt: context });
     await thread.post(result.fullStream);
