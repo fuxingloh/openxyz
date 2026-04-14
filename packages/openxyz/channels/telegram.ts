@@ -1,67 +1,181 @@
-import { createTelegramAdapter, type TelegramAdapterConfig } from "@chat-adapter/telegram";
-import type { Message } from "chat";
+import { createTelegramAdapter, type TelegramAdapterConfig, type TelegramRawMessage } from "@chat-adapter/telegram";
+import { type AiMessage, type AiMessagePart, type Message, toAiMessages } from "chat";
+import type { ChannelFile, Thread } from "@openxyz/harness/channels";
 
-export type { MessageContext, ShouldRespondFn } from "@openxyz/harness/channels";
+export type { Thread, Message, Action } from "@openxyz/harness/channels";
 
 export type TelegramConfig = TelegramAdapterConfig & {
   botToken: string;
 };
 
 /**
- * Wraps the Telegram adapter to annotate platform-specific semantics as XML tags
- * before messages reach the harness. Proxy pattern is the chat-sdk-idiomatic way
- * to wrap adapters — see `../chat/examples/nextjs-chat/src/lib/recorder.ts`.
- *
- * See `working/051` for the Proxy wrap convention and `working/052` for XML tag
- * conventions across channels.
- *
- * TODO: groups — mention-based trigger, author attribution, "lurk unless addressed"
- *   behavior (working/050)
+ * Upstream `TelegramRawMessage` omits reply/forward/quote fields. Extend here
+ * with the subset we annotate against. See https://core.telegram.org/bots/api#message.
  */
-export function telegram(opts: TelegramConfig) {
+export type TelegramRaw = TelegramRawMessage & {
+  reply_to_message?: TelegramRawMessage & {
+    text?: string;
+    caption?: string;
+    from?: TelegramUser;
+    sender_chat?: TelegramChat;
+  };
+  /** Set when the user selected a portion of the replied-to message to quote. */
+  quote?: { text: string; is_manual?: boolean };
+  /** Telegram Bot API 7.0+ unified forward metadata. */
+  forward_origin?: TelegramForwardOrigin;
+  /** Legacy forward fields (still populated alongside forward_origin). */
+  forward_from?: TelegramUser;
+  forward_from_chat?: TelegramChat;
+  forward_sender_name?: string;
+  is_automatic_forward?: boolean;
+};
+
+interface TelegramUser {
+  id?: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  is_bot?: boolean;
+}
+
+interface TelegramChat {
+  id?: number;
+  title?: string;
+  username?: string;
+}
+
+type TelegramForwardOrigin =
+  | { type: "user"; sender_user: TelegramUser }
+  | { type: "hidden_user"; sender_user_name: string }
+  | { type: "chat"; sender_chat: TelegramChat; author_signature?: string }
+  | { type: "channel"; chat: TelegramChat; message_id: number; author_signature?: string };
+
+export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
   const adapter = createTelegramAdapter(opts);
 
-  return new Proxy(adapter, {
-    get(target, prop, receiver) {
-      if (prop === "fetchMessages") {
-        return async (...args: Parameters<typeof target.fetchMessages>) => {
-          const result = await target.fetchMessages(...args);
-          for (const msg of result.messages) annotateXml(msg);
-          return result;
-        };
-      }
-      return Reflect.get(target, prop, receiver);
+  return {
+    adapter,
+    context: async (thread: Thread, _message: Message<TelegramRaw>) => {
+      // await thread.refresh();
+      // TODO(?): is refresh required?
+      return await toAiMessages(thread.recentMessages, {
+        includeNames: !thread.isDM,
+        transformMessage: (aiMsg, src) => annotate(aiMsg, src, adapter.botUserId),
+      });
     },
-  });
+    /**
+     * Default action if no `export function action` is provided in the channel file.
+     * Also used when `export function action() { return true }`, true -> uses this.
+     */
+    async action(thread: Thread, message: Message<TelegramRaw>) {
+      if (thread.isDM) {
+        return { agent: "general", typing: true };
+      }
+
+      if (message.isMention || isReplyToBot(message.raw, adapter.botUserId)) {
+        return { agent: "general", typing: true, reaction: "👀" };
+      }
+
+      // Default is doing nothing.
+      return {};
+    },
+  };
 }
 
-interface TelegramRaw {
-  reply_to_message?: { text?: string; from?: { is_bot?: boolean } };
-  forward_from?: { first_name?: string; last_name?: string; username?: string };
-  forward_from_chat?: { title?: string };
+function annotate(aiMsg: AiMessage, src: Message, botUserId: string | undefined): AiMessage {
+  const raw = src.raw as TelegramRaw | undefined;
+  if (!raw) return aiMsg;
+
+  const blocks: string[] = [];
+
+  const reply = buildReply(raw, botUserId);
+  if (reply) blocks.push(reply);
+
+  const forward = buildForward(raw);
+  if (forward) blocks.push(forward);
+
+  if (blocks.length === 0) return aiMsg;
+
+  const prefix = blocks.join("\n\n") + "\n\n";
+  return prependText(aiMsg, prefix);
 }
 
-/**
- * Mutates `msg.text` to inject Telegram-specific chat semantics as XML tags.
- * See `working/052` for tag conventions.
- */
-function annotateXml(msg: Message): void {
-  const raw = msg.raw as TelegramRaw | undefined;
-  if (!raw) return;
+function buildReply(raw: TelegramRaw, botUserId: string | undefined): string | null {
+  const reply = raw.reply_to_message;
+  if (!reply) return null;
 
-  // Reply context
-  const parent = raw.reply_to_message?.text;
-  if (parent) {
-    const author = raw.reply_to_message?.from?.is_bot ? "assistant" : "user";
-    msg.text = `<reply_to author="${author}">\n${parent}\n</reply_to>\n\n${msg.text}`;
+  const quoted = raw.quote?.text ?? reply.text ?? reply.caption;
+  if (!quoted) return null;
+
+  const replyingToBot = isBotUser(reply.from, botUserId);
+  const author = replyingToBot
+    ? "assistant"
+    : (userDisplayName(reply.from) ?? chatDisplayName(reply.sender_chat) ?? "user");
+
+  return `<reply_to author="${escapeAttr(author)}">\n${quoted}\n</reply_to>`;
+}
+
+function buildForward(raw: TelegramRaw): string | null {
+  const from = forwardFrom(raw);
+  if (!from) return null;
+  return `<forwarded from="${escapeAttr(from)}" />`;
+}
+
+function forwardFrom(raw: TelegramRaw): string | null {
+  const origin = raw.forward_origin;
+  if (origin) {
+    switch (origin.type) {
+      case "user":
+        return userDisplayName(origin.sender_user);
+      case "hidden_user":
+        return origin.sender_user_name;
+      case "chat":
+        return chatDisplayName(origin.sender_chat);
+      case "channel":
+        return chatDisplayName(origin.chat);
+    }
   }
 
-  // Forwarded content
-  const forwardFrom =
-    raw.forward_from_chat?.title ??
-    [raw.forward_from?.first_name, raw.forward_from?.last_name].filter(Boolean).join(" ") ??
-    raw.forward_from?.username;
-  if (forwardFrom) {
-    msg.text = `<forwarded from="${forwardFrom}">\n${msg.text}\n</forwarded>`;
+  return userDisplayName(raw.forward_from) ?? chatDisplayName(raw.forward_from_chat) ?? raw.forward_sender_name ?? null;
+}
+
+function isReplyToBot(raw: TelegramRaw | undefined, botUserId: string | undefined): boolean {
+  if (!raw?.reply_to_message || !botUserId) return false;
+  return isBotUser(raw.reply_to_message.from, botUserId);
+}
+
+function isBotUser(user: TelegramUser | undefined, botUserId: string | undefined): boolean {
+  return !!user?.id && !!botUserId && String(user.id) === botUserId;
+}
+
+function userDisplayName(user: TelegramUser | undefined): string | null {
+  if (!user) return null;
+  const full = [user.first_name, user.last_name].filter(Boolean).join(" ");
+  return full || user.username || null;
+}
+
+function chatDisplayName(chat: TelegramChat | undefined): string | null {
+  if (!chat) return null;
+  return chat.title ?? chat.username ?? null;
+}
+
+function escapeAttr(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function prependText(aiMsg: AiMessage, prefix: string): AiMessage {
+  // AiAssistantMessage is always string; only AiUserMessage can hold parts.
+  if (aiMsg.role === "assistant" || typeof aiMsg.content === "string") {
+    return { ...aiMsg, content: prefix + (aiMsg.content as string) };
   }
+  const parts = aiMsg.content;
+  const textIdx = parts.findIndex((p) => p.type === "text");
+  if (textIdx >= 0) {
+    const next: AiMessagePart[] = parts.map((p, i) =>
+      i === textIdx && p.type === "text" ? { ...p, text: prefix + p.text } : p,
+    );
+    return { role: "user", content: next };
+  }
+  // No text part (pure attachments) — inject one up front.
+  return { role: "user", content: [{ type: "text", text: prefix.trimEnd() }, ...parts] };
 }

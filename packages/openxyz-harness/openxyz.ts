@@ -33,12 +33,14 @@ export class OpenXyz {
     });
 
     chat.onNewMessage(/.+/, async (thread, message) => {
+      console.log(`[openxyz] received message in thread ${thread.id} on adapter ${thread.adapter.name}:`, message.text);
       const channel = this.#channels[thread.adapter.name];
       if (!channel) {
         throw new Error(`[openxyz] received message for adapter "${thread.adapter.name}" but no channel config found`);
       }
 
       const action = await channel.action(thread, message);
+      console.log(action);
 
       if (action.typing) {
         const status = typeof action.typing === "string" ? action.typing : undefined;
@@ -57,8 +59,6 @@ export class OpenXyz {
         const result = await agent.stream({ prompt: context });
         await thread.post(result.fullStream);
       }
-
-      console.log(`[openxyz] new message in thread ${thread.id} on adapter ${thread.adapter.name}: ${message.text}`);
     });
 
     // initialize() auto-starts polling for adapters in "auto" mode when no webhook is configured.
