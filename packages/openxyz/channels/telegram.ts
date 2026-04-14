@@ -57,13 +57,14 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
     adapter,
     context: async (thread: Thread, _message: Message<TelegramRaw>) => {
       // Telegram "threads" are forum topics — a supergroup splits into many.
-      // Fetch at the channel level so context spans every topic in the chat.
-      // Cache-backed: only returns messages the adapter has seen this session.
-      // const { messages } = await thread.channel.adapter.fetchChannelMessages!(thread.channel.id, { limit: 100 });
-      await thread.refresh();
-      const messages = thread.recentMessages;
-      // thread.channel.messages;
-      console.log(`[telegram] context fetched ${messages.length} messages for thread ${thread.id}`);
+      // `thread.channel.messages` iterates newest-first across every topic,
+      // auto-paginating via the adapter (cache-backed on Telegram).
+      const messages: Message<TelegramRaw>[] = [];
+      for await (const msg of thread.channel.messages) {
+        messages.push(msg as Message<TelegramRaw>);
+        if (messages.length >= 50) break;
+      }
+      console.log(`[telegram] context fetched ${messages.length} messages for channel ${thread.channel.id}`);
       return await toAiMessages(messages, {
         includeNames: !thread.isDM,
         transformMessage: (aiMsg, src) => annotate(aiMsg, src, adapter.botUserId),
