@@ -1,16 +1,12 @@
 import { join } from "node:path";
-import type { Thread as ChatThread, Message as ChatMessage, Adapter as ChatAdapter } from "chat";
-
-export type Summary = {
-  text: string;
-  upToMessageId: string;
-};
+import type { ModelMessage } from "ai";
+import type { Thread as ChatThread, Message as ChatMessage, Adapter } from "chat";
 
 export type Thread = ChatThread<{
-  summary?: Summary;
+  // summary?: Summary;
 }>;
 
-export type Message = ChatMessage;
+export type Message<Raw = unknown> = ChatMessage<Raw>;
 
 export type Action = {
   /**
@@ -28,19 +24,35 @@ export type Action = {
   reaction?: string;
 };
 
-export type Respond = boolean | Promise<boolean> | Action | Promise<Action>;
-
-export type HandleFn = (thread: Thread, message: Message) => Respond;
-
 /**
  * Representation of a channel file within the OpenXyz harness.
  */
-export type ChannelFile = {
-  adapter: ChatAdapter;
-  handle: (thread: Thread, message: Message) => Promise<Action>;
+export type ChannelFile<Raw = unknown> = {
+  /**
+   * Channel Adapter from `import("chat").Adapter`
+   */
+  adapter: Adapter;
+  /**
+   * Prepare context for the message (e.g. summarize, etc.).
+   *
+   * To override in `channels/name.ts`:
+   * ```ts
+   * export async function context(thread: Thread, message: Message) {
+   *   return [];
+   * };
+   * ```
+   */
+  context: (thread: Thread, message: Message<Raw>) => Promise<ModelMessage[]>;
+  /**
+   * Action to take when a message is received.
+   * If returns `true`, uses default action.
+   * If returns `false`, does nothing.
+   * If returns `Action`, uses that action.
+   */
+  action: (thread: Thread, message: Message<Raw>) => Promise<Action>;
 };
 
-export async function scanChannels(cwd: string): Promise<Record<string, ChannelFile>> {
+export async function scanChannelFiles(cwd: string): Promise<Record<string, ChannelFile>> {
   // TODO(agent): support .js and .ts
   const glob = new Bun.Glob("channels/[!_]*.ts");
   const channels: Record<string, ChannelFile> = {};
@@ -49,63 +61,49 @@ export async function scanChannels(cwd: string): Promise<Record<string, ChannelF
     const file = path.split("/").pop()!;
     const name = file.replace(/\.ts$/, "");
     const mod = await import(join(cwd, path));
-
-    if (!mod.default) {
-      console.warn(`[openxyz] channels/${file} has no default export, skipping`);
-      continue;
-    }
-
-    channels[name] = {
-      adapter: mod.default,
-      handle: newHandler(mod.handle, file),
-    };
+    channels[name] = newChannelFile(mod, name);
   }
 
   return channels;
 }
 
-function newHandler(handle: HandleFn, file: string): (thread: Thread, message: Message) => Promise<Action> {
-  if (typeof handle !== "function") {
-    throw new Error(`[openxyz] channels/${file} handle export is not a function`);
+function newChannelFile(mod: any, filename: string): ChannelFile {
+  if (!mod.default) {
+    throw new Error(`[openxyz] channel file has no default export`);
   }
 
-  if (!handle) {
-    console.warn(`[openxyz] channels/${file} has no handle export, using default handle that always returns true`);
-    return async (thread: Thread, message: Message) => {
-      return defaultAction(thread, message);
-    };
-  }
+  const file = mod.default as ChannelFile;
 
-  return async (thread: Thread, message: Message): Promise<Action> => {
-    const respond = await handle(thread, message);
-    if (typeof respond !== "boolean") {
-      return respond;
-    }
-
-    if (respond) {
-      return defaultAction(thread, message);
-    }
-
-    return {};
+  return {
+    adapter: file.adapter,
+    // TODO(?): mod.context allow `export function context() {}`
+    context: file.context,
+    action: mapActionFunc(mod, filename),
   };
 }
 
-function defaultAction(thread: Thread, message: Message): Action {
-  if (thread.isDM) {
-    return {
-      agent: "general",
-      typing: true,
-    };
+export type ActionFunc = (thread: Thread, message: Message) => boolean | Promise<boolean> | Action | Promise<Action>;
+
+function mapActionFunc(mod: any, filename: string): ChannelFile["action"] {
+  const file = mod.default as ChannelFile;
+  if (mod.action === undefined) {
+    console.warn(`[openxyz] channels/${filename} has no export function action, using default handler.`);
+    return file.action;
   }
 
-  if (message.isMention) {
-    return {
-      agent: "general",
-      typing: true,
-      reaction: "👀",
-    };
+  const func: ActionFunc = mod.action;
+  if (typeof func !== "function") {
+    throw new Error(`[openxyz] channels/${filename} handle export is not a function`);
   }
 
-  // Default is doing nothing.
-  return {};
+  return async (thread: Thread, message: Message): Promise<Action> => {
+    const booleanOrAction = await func(thread, message);
+    if (typeof booleanOrAction === "boolean") {
+      if (booleanOrAction) {
+        return file.action(thread, message);
+      }
+      return {};
+    }
+    return booleanOrAction;
+  };
 }
