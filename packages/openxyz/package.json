@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@chat-adapter/telegram": "^4.24.0",
-    "@next/env": "^16.2.2",
+    "@next/env": "^16.2.3",
     "@opencode-ai/plugin": "^1.4",
     "@opencode-ai/sdk": "^1.4",
     "chat": "^4.24.0",
