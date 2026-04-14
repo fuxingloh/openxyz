@@ -56,9 +56,12 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
   return {
     adapter,
     context: async (thread: Thread, _message: Message<TelegramRaw>) => {
-      // await thread.refresh();
-      // TODO(?): is refresh required?
-      return await toAiMessages(thread.recentMessages, {
+      // Telegram "threads" are forum topics — a supergroup splits into many.
+      // Fetch at the channel level so context spans every topic in the chat.
+      // Cache-backed: only returns messages the adapter has seen this session.
+      const { messages } = await thread.channel.adapter.fetchChannelMessages!(thread.channel.id, { limit: 100 });
+      console.log(`[telegram] fetched ${messages.length} messages for context in channel ${thread.channel.id}`); // debug
+      return await toAiMessages(messages, {
         includeNames: !thread.isDM,
         transformMessage: (aiMsg, src) => annotate(aiMsg, src, adapter.botUserId),
       });
@@ -72,7 +75,7 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
         return { agent: "general", typing: true };
       }
 
-      if (message.isMention || isReplyToBot(message.raw, adapter.botUserId)) {
+      if (message.isMention || isReplyToBot(thread, message)) {
         return { agent: "general", typing: true, reaction: "👀" };
       }
 
@@ -139,7 +142,14 @@ function forwardFrom(raw: TelegramRaw): string | null {
   return userDisplayName(raw.forward_from) ?? chatDisplayName(raw.forward_from_chat) ?? raw.forward_sender_name ?? null;
 }
 
-function isReplyToBot(raw: TelegramRaw | undefined, botUserId: string | undefined): boolean {
+/**
+ * True when the message is a reply to one of our bot's earlier messages.
+ * Reads `raw.reply_to_message.from.id` against the adapter's `botUserId`
+ * (populated after `adapter.initialize()` → `getMe()`).
+ */
+export function isReplyToBot(thread: Thread, message: Message<TelegramRaw>): boolean {
+  const botUserId = (thread.adapter as { botUserId?: string }).botUserId;
+  const raw = message.raw;
   if (!raw?.reply_to_message || !botUserId) return false;
   return isBotUser(raw.reply_to_message.from, botUserId);
 }

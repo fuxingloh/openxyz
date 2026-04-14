@@ -27,6 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [ ] Agent model + reasoning config — nested `model: { id, reasoning }` in frontmatter, shorthand string fallback, per-provider mapping (`working/053`)
 - [x] Group chat handling — mention-based trigger, author attribution, "lurk unless addressed" prompt (`working/050`)
 - [ ] File chat-sdk upstream wishlist — XML semantic tagging, auto-compaction, tool/trace file handling (`working/055`)
+- [ ] **Fan out harness dispatch across `onDirectMessage`/`onNewMention`/`onSubscribedMessage` — `onNewMessage(/.+/)` alone catches none of our traffic (`working/059`)**
 
 ## What OpenXyz is
 
@@ -284,6 +285,7 @@ Read these first for deep context on any topic.
 - **056** — lobu (multi-tenant chat-sdk gateway, same handler wiring; adapter factory + modular instruction providers worth borrowing)
 - **057** — open-agents (Vercel Labs AI SDK v6 + Workflow SDK; tool implementations + cache-control + model-family dispatch worth referencing)
 - **058** — codex (OpenAI Rust agent; typed tool registry pattern by analogy, otherwise lowest priority)
+- **059** — `onNewMessage(/.+/)` catch-all mismatch (chat-sdk dispatch is tiered, our single pattern handler catches ~nothing — fan out to dm/mention/subscribed)
 
 ### Patterns to learn from
 

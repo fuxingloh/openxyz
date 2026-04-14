@@ -1,9 +1,8 @@
-import { Chat, toAiMessages } from "chat";
-import type { Thread, Message } from "chat";
+import { Chat } from "chat";
+import type { Thread as ChatThread, Message as ChatMessage } from "chat";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { scanChannelFiles, type ChannelFile } from "./channels";
 import { AgentFactory } from "./agents/factory";
-import type { ModelMessage } from "ai";
 
 export class OpenXyz {
   readonly cwd: string;
@@ -32,33 +31,26 @@ export class OpenXyz {
       fallbackStreamingPlaceholderText: null,
     });
 
-    chat.onNewMessage(/.+/, async (thread, message) => {
-      console.log(`[openxyz] received message in thread ${thread.id} on adapter ${thread.adapter.name}:`, message.text);
-      const channel = this.#channels[thread.adapter.name];
-      if (!channel) {
-        throw new Error(`[openxyz] received message for adapter "${thread.adapter.name}" but no channel config found`);
-      }
-
-      const action = await channel.action(thread, message);
-      console.log(action);
-
-      if (action.typing) {
-        const status = typeof action.typing === "string" ? action.typing : undefined;
-        thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
-      }
-
-      if (action.reaction) {
-        thread.adapter
-          .addReaction(thread.id, message.id, action.reaction)
-          .catch((err) => console.warn("[openxyz] addReaction failed", err));
-      }
-
-      if (action.agent) {
-        const agent = await this.agentFactory.create(action.agent);
-        const context = await channel.context(thread, message);
-        const result = await agent.stream({ prompt: context });
-        await thread.post(result.fullStream);
-      }
+    // chat-sdk dispatch is tiered with early returns (working/059).
+    // Fan out every incoming-message tier into a single `onMessage` so channel
+    // files own the decision via `action()` regardless of how chat-sdk routed.
+    chat.onDirectMessage((thread, message) => {
+      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    });
+    chat.onNewMention((thread, message) => {
+      // First @-mention in an unsubscribed (typically group) thread — subscribe
+      // so follow-ups flow through onSubscribedMessage (working/050).
+      thread.subscribe().catch((err) => console.warn("[openxyz] thread.subscribe failed", err));
+      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    });
+    chat.onSubscribedMessage((thread, message) => {
+      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    });
+    // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
+    // (typically random group chatter). Channel `action()` decides whether to
+    // engage; returning `{}` stays silent.
+    chat.onNewMessage(/.+/, (thread, message) => {
+      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
     });
 
     // initialize() auto-starts polling for adapters in "auto" mode when no webhook is configured.
@@ -66,17 +58,34 @@ export class OpenXyz {
     this.#chat = chat;
   }
 
+  async onMessage(thread: ChatThread, message: ChatMessage): Promise<void> {
+    const channel = this.#channels[thread.adapter.name];
+    if (!channel) {
+      throw new Error(`[openxyz] received message for adapter "${thread.adapter.name}" but no channel config found`);
+    }
+
+    const action = await channel.action(thread, message);
+
+    if (action.typing) {
+      const status = typeof action.typing === "string" ? action.typing : undefined;
+      thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
+    }
+
+    if (action.reaction) {
+      thread.adapter
+        .addReaction(thread.id, message.id, action.reaction)
+        .catch((err) => console.warn("[openxyz] addReaction failed", err));
+    }
+
+    if (!action.agent) return;
+
+    const agent = await this.agentFactory.create(action.agent);
+    const context = await channel.context(thread, message);
+    const result = await agent.stream({ prompt: context });
+    await thread.post(result.fullStream);
+  }
+
   async stop(): Promise<void> {
     await this.#chat?.shutdown();
   }
-}
-
-/**
- * Provider error messages aren't typed — detect context-overflow by regex on
- * the error text. Matches OpenAI ("context_length_exceeded", "maximum context
- * length"), Anthropic ("prompt is too long"), and generic phrasings.
- */
-function isContextOverflow(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return /context[_ ]?(length|window)|token limit|prompt is too long|exceeds?.*context|too many tokens/.test(msg);
 }

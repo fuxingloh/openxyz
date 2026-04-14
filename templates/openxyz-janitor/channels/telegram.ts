@@ -1,4 +1,4 @@
-import { Message, telegram, type TelegramRaw, Thread } from "openxyz/channels/telegram";
+import { isReplyToBot, Message, telegram, type TelegramRaw, Thread } from "openxyz/channels/telegram";
 import { readEnv, z } from "openxyz/env";
 
 export default telegram({
@@ -15,7 +15,6 @@ const allowlist = readEnv("TELEGRAM_ALLOWLIST", {
 export function action(thread: Thread, message: Message<TelegramRaw>) {
   if (!allowlist.has(message.author.userId)) return false;
   // In groups, only respond when addressed — @-mentioned or replying to the bot.
-  // TODO(?): Reply-to-bot is promoted to isMention by the telegram wrapper (working/050).
-  if (!thread.isDM && !message.isMention) return false;
+  if (!thread.isDM && !message.isMention && !isReplyToBot(thread, message)) return false;
   return true;
 }
