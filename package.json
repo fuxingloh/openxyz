@@ -27,7 +27,7 @@
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "prettier-plugin-packagejson": "^3.0.2",
-    "turbo": "^2.9.4",
+    "turbo": "^2.9.6",
     "typescript": "^6"
   },
   "packageManager": "pnpm@10.25.0"
