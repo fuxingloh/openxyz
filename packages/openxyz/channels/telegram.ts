@@ -74,13 +74,17 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
       // Telegram "threads" are forum topics — a supergroup splits into many.
       // `thread.channel.messages` iterates newest-first across every topic,
       // auto-paginating via the adapter (cache-backed on Telegram).
+      // TODO: Busy-group duplicate-fetch bug — see mnemonic/065. This runs per
+      //  incoming message and returns a growing cached window each time, causing
+      //  replies to stale turns. Likely fix: skip fetch when `reply()` returns {},
+      //  mark the triggering message, dedupe by id.
       const messages: Message<TelegramRaw>[] = [];
       for await (const msg of thread.channel.messages) {
         messages.push(msg as Message<TelegramRaw>);
         if (messages.length >= 50) break;
       }
       console.log(`[telegram] context fetched ${messages.length} messages for channel ${thread.channel.id}`);
-      return await toAiMessages(messages, {
+      return await toAiMessages(messages.reverse(), {
         includeNames: !thread.isDM,
         transformMessage: (aiMsg, src) => annotate(aiMsg, src, adapter.botUserId),
       });

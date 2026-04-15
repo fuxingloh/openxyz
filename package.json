@@ -9,7 +9,6 @@
       "templates/*"
     ],
     "catalog": {
-      "@ai-sdk/openai-compatible": "2.0.41",
       "@ai-sdk/provider": "3.0.8",
       "@chat-adapter/state-pg": "4.25.0",
       "@chat-adapter/telegram": "4.25.0",

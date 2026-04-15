@@ -6,7 +6,8 @@
   "author": "fuxingloh",
   "type": "module",
   "dependencies": {
-    "@ai-sdk/openai-compatible": "catalog:",
+    "@ai-sdk/amazon-bedrock": "4.0.93",
+    "@ai-sdk/openai-compatible": "2.0.41",
     "@chat-adapter/state-pg": "catalog:",
     "@electric-sql/pglite": "^0.4",
     "chat": "catalog:",
