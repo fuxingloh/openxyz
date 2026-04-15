@@ -1,17 +1,26 @@
-import { Bash, MountableFs, ReadWriteFs, OverlayFs, type IFileSystem, type MountConfig } from "just-bash";
+import { Bash, MountableFs, type MountConfig } from "just-bash";
 import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
+import { HomeDrive } from "../drives/home";
+import type { Permission } from "../drives/drive.ts";
 
 const MAX_BYTES = 50_000;
 
-const FilesystemAccess = z.enum(["read-only", "read-write"]);
+const DrivePermEnum = z.enum(["read-only", "read-write"]);
 
 export const FilesystemConfigSchema = z
-  .union([FilesystemAccess, z.record(z.string().startsWith("/"), FilesystemAccess)])
+  .union([DrivePermEnum, z.record(z.string().startsWith("/"), DrivePermEnum)])
   .default("read-write");
 
 export type FilesystemConfig = z.infer<typeof FilesystemConfigSchema>;
+
+function getMountPermission(mountPath: string, config: FilesystemConfig): Permission | undefined {
+  if (typeof config === "string") {
+    return config;
+  }
+  return config[mountPath];
+}
 
 export class FilesystemTools {
   readonly #bash: Bash;
@@ -20,10 +29,16 @@ export class FilesystemTools {
     // TODO(?): IMPORTANT make sure .env, .gitignore, node_modules (maybe?) are not exposed to the agent-
     //  OpenXyz Approved Plugins Hub?
     //  Advanced users can just give "real Bash" access
-    const fs = new MountableFs({
-      // TODO: mount /mnt/* paths from perms when external mounts are implemented
-      mounts: [getHomeMountConfig(cwd, config)],
-    });
+
+    const mounts: MountConfig[] = [];
+    const homePermission = getMountPermission("/home/openxyz", config);
+    if (homePermission) {
+      mounts.push(new HomeDrive(cwd, homePermission).mountConfig("/home/openxyz"));
+    }
+
+    // TODO: mount /mnt/* paths from perms when external mounts are implemented
+
+    const fs = new MountableFs({ mounts: mounts });
     this.#bash = new Bash({ fs, cwd: "/home/openxyz", python: true, javascript: true });
   }
 
@@ -163,18 +178,4 @@ export class FilesystemTools {
       }),
     };
   }
-}
-
-function getHomeMountConfig(cwd: string, config: FilesystemConfig): MountConfig {
-  if (config === "read-write") {
-    return { mountPoint: "/home/openxyz", filesystem: new ReadWriteFs({ root: cwd }) };
-  }
-
-  if (typeof config === "object") {
-    if (config["/home/openxyz"] === "read-write") {
-      return { mountPoint: "/home/openxyz", filesystem: new ReadWriteFs({ root: cwd }) };
-    }
-  }
-
-  return { mountPoint: "/home/openxyz", filesystem: new OverlayFs({ root: cwd, readOnly: true }) };
 }
