@@ -2,15 +2,14 @@
 import { Command } from "commander";
 import pkg from "../package.json";
 
-import start from "./start";
+import start from "./cmds/start";
+import build from "./cmds/build";
 
 const cli = new Command();
 
-// TODO(@fuxingloh): add description
+// TODO(?): add description
 cli.name("openxyz").version(pkg.version);
 cli.addCommand(start);
-
-// TODO(?): to work on, to generate a single binary.js to basically do this: "bun binary.js"
-// cli.addCommand(build);
+cli.addCommand(build);
 
 await cli.parseAsync();
