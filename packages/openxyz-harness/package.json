@@ -6,10 +6,10 @@
   "author": "fuxingloh",
   "type": "module",
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^2.0.41",
-    "@chat-adapter/state-pg": "^4.25.0",
+    "@ai-sdk/openai-compatible": "catalog:",
+    "@chat-adapter/state-pg": "catalog:",
     "@electric-sql/pglite": "^0.4",
-    "chat": "^4.25.0",
+    "chat": "catalog:",
     "gray-matter": "^4.0.3",
     "just-bash": "^2",
     "turndown": "^7.2.4",
@@ -20,7 +20,7 @@
     "@types/turndown": "^5.0.6"
   },
   "peerDependencies": {
-    "@ai-sdk/provider": "^3",
-    "ai": "^6"
+    "@ai-sdk/provider": "catalog:",
+    "ai": "catalog:"
   }
 }

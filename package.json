@@ -3,10 +3,20 @@
   "name": "@workspace/openxyz",
   "version": "0.0.0",
   "private": true,
-  "workspaces": [
-    "packages/*",
-    "templates/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "packages/*",
+      "templates/*"
+    ],
+    "catalog": {
+      "@ai-sdk/openai-compatible": "2.0.41",
+      "@ai-sdk/provider": "3.0.8",
+      "@chat-adapter/state-pg": "4.25.0",
+      "@chat-adapter/telegram": "4.25.0",
+      "ai": "6.0.161",
+      "chat": "4.25.0"
+    }
+  },
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean",

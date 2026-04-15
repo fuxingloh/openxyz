@@ -17,11 +17,11 @@
     "packages/openxyz": {
       "name": "openxyz",
       "version": "0.0.0",
-      "bin": "commands/bin.ts",
+      "bin": "bin/bin.ts",
       "dependencies": {
-        "@chat-adapter/telegram": "4.25.0",
+        "@chat-adapter/telegram": "catalog:",
         "@openxyz/harness": "workspace:*",
-        "chat": "4.25.0",
+        "chat": "catalog:",
         "commander": "^14.0.3",
         "zod": "^4",
       },
@@ -29,18 +29,18 @@
         "@types/bun": "latest",
       },
       "peerDependencies": {
-        "@ai-sdk/provider": "^3",
-        "ai": "^6",
+        "@ai-sdk/provider": "catalog:",
+        "ai": "catalog:",
       },
     },
     "packages/openxyz-harness": {
       "name": "@openxyz/harness",
       "version": "0.0.0",
       "dependencies": {
-        "@ai-sdk/openai-compatible": "^2.0.41",
-        "@chat-adapter/state-pg": "^4.25.0",
+        "@ai-sdk/openai-compatible": "catalog:",
+        "@chat-adapter/state-pg": "catalog:",
         "@electric-sql/pglite": "^0.4",
-        "chat": "^4.25.0",
+        "chat": "catalog:",
         "gray-matter": "^4.0.3",
         "just-bash": "^2",
         "turndown": "^7.2.4",
@@ -51,8 +51,8 @@
         "@types/turndown": "^5.0.6",
       },
       "peerDependencies": {
-        "@ai-sdk/provider": "^3",
-        "ai": "^6",
+        "@ai-sdk/provider": "catalog:",
+        "ai": "catalog:",
       },
     },
     "templates/openxyz-janitor": {
@@ -68,6 +68,14 @@
   "patchedDependencies": {
     "@chat-adapter/telegram@4.25.0": "patches/chat-adapter-telegram@4.25.0.patch",
   },
+  "catalog": {
+    "@ai-sdk/openai-compatible": "2.0.41",
+    "@ai-sdk/provider": "3.0.8",
+    "@chat-adapter/state-pg": "4.25.0",
+    "@chat-adapter/telegram": "4.25.0",
+    "ai": "6.0.161",
+    "chat": "4.25.0",
+  },
   "packages": {
     "@ai-sdk/gateway": ["@ai-sdk/gateway@3.0.95", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23", "@vercel/oidc": "3.1.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-ZmUNNbZl3V42xwQzPaNUi+s8eqR2lnrxf0bvB6YbLXpLjHYv0k2Y78t12cNOfY0bxGeuVVTLyk856uLuQIuXEQ=="],
 
@@ -81,7 +89,7 @@
 
     "@chat-adapter/shared": ["@chat-adapter/shared@4.25.0", "", { "dependencies": { "chat": "4.25.0" } }, "sha512-NoRjEqNN1fyOTwT3AXNXjoy88QHk7FxhQxRus9JdEZBBYsDEuP4B8ekN+BVLQD/rlPcDgQ5TN0UGuiOi9r5nZQ=="],
 
-    "@chat-adapter/state-pg": ["@chat-adapter/state-pg@4.26.0", "", { "dependencies": { "chat": "4.26.0", "pg": "^8.20.0" } }, "sha512-YnLDURfimQfZx7qeqoN2IdFpOH0xk4DUQcIDvNNnsgId6z40Lh4CyJqoZpiHE+y8EHAy3kJf43plWfxJVuB50A=="],
+    "@chat-adapter/state-pg": ["@chat-adapter/state-pg@4.25.0", "", { "dependencies": { "chat": "4.25.0", "pg": "^8.20.0" } }, "sha512-S2kZCIRm1tZg/srG8q491cLhZ/dbHRAROIskfasTGh46xyqgIWubVrlD4e8RhMfFwmbGdK4mLKzvvjhU5z4XtQ=="],
 
     "@chat-adapter/telegram": ["@chat-adapter/telegram@4.25.0", "", { "dependencies": { "@chat-adapter/shared": "4.25.0", "chat": "4.25.0" } }, "sha512-7qlscK7BJLQUELXgKssw9tJ1zjMq99w4772non0xBlHjyKvej+1nQxtl8R1eQ6dk9djErXfWGsFBj5t1J4GS4w=="],
 
@@ -536,8 +544,6 @@
     "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
 
     "zwitch": ["zwitch@2.0.4", "", {}, "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A=="],
-
-    "@chat-adapter/state-pg/chat": ["chat@4.26.0", "", { "dependencies": { "@workflow/serde": "4.1.0-beta.2", "mdast-util-to-string": "^4.0.0", "remark-gfm": "^4.0.0", "remark-parse": "^11.0.0", "remark-stringify": "^11.0.0", "remend": "^1.2.1", "unified": "^11.0.5" } }, "sha512-QToDnIEGpyb8yQA6YLMHOSRK30YVk4RtsyFyuWFYyB2c4jQlyIrSWtwVK7qyvmvqzQp9uDwCdJRAhS8GtCHAGQ=="],
 
     "argparse/sprintf-js": ["sprintf-js@1.0.3", "", {}, "sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g=="],
 

@@ -4,18 +4,19 @@
   "license": "MIT",
   "author": "fuxingloh",
   "type": "module",
-  "bin": "commands/bin.ts",
+  "bin": "bin/bin.ts",
   "files": [
-    "commands",
+    "bin",
     "tools.ts",
     "channels/*",
     "env.ts",
+    "build.ts",
     "tsconfig.json"
   ],
   "dependencies": {
-    "@chat-adapter/telegram": "4.25.0",
+    "@chat-adapter/telegram": "catalog:",
     "@openxyz/harness": "workspace:*",
-    "chat": "4.25.0",
+    "chat": "catalog:",
     "commander": "^14.0.3",
     "zod": "^4"
   },
@@ -23,7 +24,7 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "@ai-sdk/provider": "^3",
-    "ai": "^6"
+    "@ai-sdk/provider": "catalog:",
+    "ai": "catalog:"
   }
 }
