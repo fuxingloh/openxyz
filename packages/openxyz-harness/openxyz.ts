@@ -35,7 +35,7 @@ export class OpenXyz {
       fallbackStreamingPlaceholderText: null,
     });
 
-    // chat-sdk dispatch is tiered with early returns (references/059).
+    // chat-sdk dispatch is tiered with early returns (mnemonic/059).
     // Fan out every incoming-message tier into a single `onMessage` so channel
     // files own the decision via `action()` regardless of how chat-sdk routed.
     chat.onDirectMessage((thread, message) => {
@@ -43,7 +43,7 @@ export class OpenXyz {
     });
     chat.onNewMention((thread, message) => {
       // First @-mention in an unsubscribed (typically group) thread — subscribe
-      // so follow-ups flow through onSubscribedMessage (references/050).
+      // so follow-ups flow through onSubscribedMessage (mnemonic/050).
       thread.subscribe().catch((err) => console.warn("[openxyz] thread.subscribe failed", err));
       this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
     });

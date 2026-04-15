@@ -1,7 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 // TODO(?): During testing:
-//  Route through opencode.ai's hosted OpenAI-compatible gateway. See references/025.
+//  Route through opencode.ai's hosted OpenAI-compatible gateway. See mnemonic/025.
 const zen = createOpenAICompatible({
   name: "opencode-zen",
   apiKey: "public",

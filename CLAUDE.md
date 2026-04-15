@@ -4,31 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Open work
 
-- [x] Inject skill info into system prompt so the agent proactively loads skills (`references/033`)
-- [x] Load agents from `agents/*.md` in templates — frontmatter config + body as system prompt (`references/034`)
-- [x] Implement `delegate` tool for spawning subagents with restricted tools (`references/038`)
-- [ ] Add LLM prompt caching (`applyCaching` on system/user messages) — free perf win (`references/032`)
-- [x] File upstream issue on vercel/chat for Telegram MarkdownV2 entity escaping (`references/043`)
+- [x] Inject skill info into system prompt so the agent proactively loads skills (`mnemonic/033`)
+- [x] Load agents from `agents/*.md` in templates — frontmatter config + body as system prompt (`mnemonic/034`)
+- [x] Implement `delegate` tool for spawning subagents with restricted tools (`mnemonic/038`)
+- [ ] Add LLM prompt caching (`applyCaching` on system/user messages) — free perf win (`mnemonic/032`)
+- [x] File upstream issue on vercel/chat for Telegram MarkdownV2 entity escaping (`mnemonic/043`)
 - [ ] `mode: "polling"` default for `openxyz/channels.telegram()` — stale webhooks cause silent failures
 - [ ] Model configurability — `big-pickle` hardcoded in `agents/main.ts`, should be template config
-- [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`references/032`)
-- [x] Context compaction — `compact.md` agent + threshold-based fire in `#reply` (`references/042`)
-- [ ] Tool output pruning — prune old tool outputs between turns to save context (`references/032`)
-- [ ] **MCP support — connect external tool servers via Model Context Protocol (`references/037`) [HIGH PRIORITY]**
-- [ ] Permission system — allow/deny/ask rules per agent/session, beyond channel allowlists (`references/037`)
-- [ ] Retry with `Retry-After` header parsing — AI SDK's `maxRetries` doesn't handle this (`references/037`)
-- [ ] Session persistence — swap `state-memory` for a persistent chat-sdk adapter (`references/037`)
-- [ ] Load `USER.md` into system prompt — user context (name, timezone, preferences) (`references/039`)
-- [ ] Load `MEMORY.md` into system prompt — curated long-term memory (`references/039`)
-- [ ] `BOOTSTRAP.md` first-run ritual — load, run, delete after completion (`references/039`)
-- [ ] `HEARTBEAT.md` periodic tasks — needs cron/scheduler mechanism, defer to v2 (`references/039`)
-- [ ] Validate agent frontmatter at scan time — error if tool/skill name doesn't exist (`references/038`)
-- [ ] VFS permissions for just-bash — sandboxed filesystem access per agent (`references/038`)
-- [ ] Agent model + reasoning config — nested `model: { id, reasoning }` in frontmatter, shorthand string fallback, per-provider mapping (`references/053`)
-- [x] Group chat handling — mention-based trigger, author attribution, "lurk unless addressed" prompt (`references/050`)
-- [ ] File chat-sdk upstream wishlist — XML semantic tagging, auto-compaction, tool/trace file handling (`references/055`)
-- [ ] **Fan out harness dispatch across `onDirectMessage`/`onNewMention`/`onSubscribedMessage` — `onNewMessage(/.+/)` alone catches none of our traffic (`references/059`)**
-- [ ] **`openxyz build` + webhook mode — emit `.vercel/output/` artifact, `OpenXyz.load({ mode: "webhook" })` for deployable runtime (`references/060`)**
+- [ ] Token/cost tracking — track `cache.read`/`cache.write` separately (`mnemonic/032`)
+- [x] Context compaction — `compact.md` agent + threshold-based fire in `#reply` (`mnemonic/042`)
+- [ ] Tool output pruning — prune old tool outputs between turns to save context (`mnemonic/032`)
+- [ ] **MCP support — connect external tool servers via Model Context Protocol (`mnemonic/037`) [HIGH PRIORITY]**
+- [ ] Permission system — allow/deny/ask rules per agent/session, beyond channel allowlists (`mnemonic/037`)
+- [ ] Retry with `Retry-After` header parsing — AI SDK's `maxRetries` doesn't handle this (`mnemonic/037`)
+- [ ] Session persistence — swap `state-memory` for a persistent chat-sdk adapter (`mnemonic/037`)
+- [ ] Load `USER.md` into system prompt — user context (name, timezone, preferences) (`mnemonic/039`)
+- [ ] Load `MEMORY.md` into system prompt — curated long-term memory (`mnemonic/039`)
+- [ ] `BOOTSTRAP.md` first-run ritual — load, run, delete after completion (`mnemonic/039`)
+- [ ] `HEARTBEAT.md` periodic tasks — needs cron/scheduler mechanism, defer to v2 (`mnemonic/039`)
+- [ ] Validate agent frontmatter at scan time — error if tool/skill name doesn't exist (`mnemonic/038`)
+- [ ] VFS permissions for just-bash — sandboxed filesystem access per agent (`mnemonic/038`)
+- [ ] Agent model + reasoning config — nested `model: { id, reasoning }` in frontmatter, shorthand string fallback, per-provider mapping (`mnemonic/053`)
+- [x] Group chat handling — mention-based trigger, author attribution, "lurk unless addressed" prompt (`mnemonic/050`)
+- [ ] File chat-sdk upstream wishlist — XML semantic tagging, auto-compaction, tool/trace file handling (`mnemonic/055`)
+- [ ] **Fan out harness dispatch across `onDirectMessage`/`onNewMention`/`onSubscribedMessage` — `onNewMessage(/.+/)` alone catches none of our traffic (`mnemonic/059`)**
+- [ ] **`openxyz build` + webhook mode — emit `.vercel/output/` artifact, `OpenXyz.load({ mode: "webhook" })` for deployable runtime (`mnemonic/060`)**
 
 ## What OpenXyz is
 
@@ -53,11 +53,11 @@ export default tool({
 });
 ```
 
-Patterns from opencode's codebase are still fair game to learn from (see `references/013`, `references/014`), but the runtime is entirely AI SDK. Default to AI Gateway model strings (`provider/model`) over direct provider SDK wiring where possible.
+Patterns from opencode's codebase are still fair game to learn from (see `mnemonic/013`, `mnemonic/014`), but the runtime is entirely AI SDK. Default to AI Gateway model strings (`provider/model`) over direct provider SDK wiring where possible.
 
 ## Project history
 
-An earlier iteration experimented with a hard fork of opencode. The current direction builds on Vercel AI SDK directly, learning from opencode's and openclaw's implementations without inheriting their runtimes. See `references/012` for the tradeoff analysis, `references/017` for the blueprint.
+An earlier iteration experimented with a hard fork of opencode. The current direction builds on Vercel AI SDK directly, learning from opencode's and openclaw's implementations without inheriting their runtimes. See `mnemonic/012` for the tradeoff analysis, `mnemonic/017` for the blueprint.
 
 **All design docs are in `working/*.md` and are load-bearing context.** When in doubt, read them before editing.
 
@@ -77,18 +77,18 @@ During `/compact` or context compression:
 
 Sibling projects referenced for learning. **Not dependencies** — do not import from them. Use `../project-name` paths, never absolute paths.
 
-| Project          | Path              | What it is                                                                            | Notes            |
-| ---------------- | ----------------- | ------------------------------------------------------------------------------------- | ---------------- |
-| **opencode**     | `../opencode`     | TypeScript coding agent                                                               | `references/020` |
-| **openclaw**     | `../openclaw`     | Earlier iteration                                                                     | `references/021` |
-| **hermes-agent** | `../hermes-agent` | Python production agent (Nous Research)                                               | `references/044` |
-| **claw-code**    | `../claw-code`    | Rust Claude Code alternative                                                          | `references/045` |
-| **chat**         | `../chat`         | The chat-sdk we depend on (structural map)                                            | `references/046` |
-| **aixyz**        | `../aixyz`        | User's previous Bun-based project (stylistic inspiration)                             | `references/047` |
-| **ai**           | `../ai`           | The `ai` SDK package we depend on — source for `ToolLoopAgent`, stop conditions, etc. | `references/048` |
-| **lobu**         | `../lobu`         | Multi-tenant chat-sdk gateway for OpenClaw agents — same chat-sdk wiring as us        | `references/056` |
-| **open-agents**  | `../open-agents`  | Vercel Labs reference: AI SDK v6 + Workflow SDK + Postgres coding agent               | `references/057` |
-| **codex**        | `../codex`        | OpenAI Rust coding agent (CLI-only) — patterns by analogy, language gap               | `references/058` |
+| Project          | Path              | What it is                                                                            | Notes          |
+| ---------------- | ----------------- | ------------------------------------------------------------------------------------- | -------------- |
+| **opencode**     | `../opencode`     | TypeScript coding agent                                                               | `mnemonic/020` |
+| **openclaw**     | `../openclaw`     | Earlier iteration                                                                     | `mnemonic/021` |
+| **hermes-agent** | `../hermes-agent` | Python production agent (Nous Research)                                               | `mnemonic/044` |
+| **claw-code**    | `../claw-code`    | Rust Claude Code alternative                                                          | `mnemonic/045` |
+| **chat**         | `../chat`         | The chat-sdk we depend on (structural map)                                            | `mnemonic/046` |
+| **aixyz**        | `../aixyz`        | User's previous Bun-based project (stylistic inspiration)                             | `mnemonic/047` |
+| **ai**           | `../ai`           | The `ai` SDK package we depend on — source for `ToolLoopAgent`, stop conditions, etc. | `mnemonic/048` |
+| **lobu**         | `../lobu`         | Multi-tenant chat-sdk gateway for OpenClaw agents — same chat-sdk wiring as us        | `mnemonic/056` |
+| **open-agents**  | `../open-agents`  | Vercel Labs reference: AI SDK v6 + Workflow SDK + Postgres coding agent               | `mnemonic/057` |
+| **codex**        | `../codex`        | OpenAI Rust coding agent (CLI-only) — patterns by analogy, language gap               | `mnemonic/058` |
 
 Learn patterns from each; don't port code wholesale. Different stacks (Python, Rust, TS), so code doesn't transfer — architecture, patterns, naming conventions do.
 
@@ -139,43 +139,43 @@ my-template/
 - **Harness** = the self-modifying config layer (tools/skills/agents/channels) the AI can edit
 - **Channel** = transport type (telegram, slack, terminal) — lives in `channels/`. A channel is the parent container.
 - **Session** = one conversation context, child of a channel. One channel contains many sessions (one per user/thread). Naming: `<channel>:<id>`, e.g. `telegram:7601560926`.
-- **VFS** = virtual filesystem the AI lives inside (`/home/openxyz/` + `/mnt/*`, see `references/008`)
+- **VFS** = virtual filesystem the AI lives inside (`/home/openxyz/` + `/mnt/*`, see `mnemonic/008`)
 - **Working docs** = `working/*.md` scratch space for design thinking (git-ignored, numbered sequentially)
 
 ## Key design decisions (index)
 
-| #   | Decision                                                                                                           | Doc                                |
-| --- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| 1   | Channels are the parent; sessions are children of channels                                                         | `references/002`                   |
-| 2   | `openxyz/tools` re-exports `tool` from `ai` + `z` from `zod`                                                       | `references/003` (+ new direction) |
-| 3   | Scan `cwd/tools/[!_]*.{js,ts}` for custom tools                                                                    | `references/003`                   |
-| 4   | Skills from `cwd/skills/**/SKILL.md` only                                                                          | `references/006`                   |
-| 5   | VFS as the AI's entire world (`/home/openxyz` + `/mnt/*`)                                                          | `references/008`                   |
-| 6   | Stateless bash per call (`workdir` param, not `cd`)                                                                | `references/008`                   |
-| 7   | Harness is an opt-in menu per template                                                                             | `references/008`                   |
-| 8   | `openxyz.config.ts` (TypeScript) for mount config                                                                  | `references/008`                   |
-| 9   | Per-user sessions for Telegram (`telegram:<uid>`)                                                                  | `references/016`                   |
-| 10  | Fire-and-forget bridge handlers (avoid chat-sdk LockError)                                                         | `references/004`                   |
-| 11  | Trust chat-sdk to render markdown per platform — no manual fallbacks in bridge code                                | `references/022`                   |
-| 12  | Build on Vercel AI SDK, not fork opencode                                                                          | `references/012`                   |
-| 13  | All channels go through `chat` + `@chat-adapter/*` (no direct platform SDKs)                                       | `references/022`                   |
-| 14  | Reference opencode at `../opencode` (not a dependency)                                                             | `references/020`                   |
-| 15  | Reference openclaw at `../openclaw` (not a dependency)                                                             | `references/021`                   |
-| 16  | Engine in `@openxyz/harness`; `openxyz` is the CLI + facade templates import from                                  | (this file)                        |
-| 17  | First-party wrappers for popular channels live at `openxyz/channels`                                               | `references/023`                   |
-| 18  | Log every direction/tradeoff/decision to `working/NNN-*.md` proactively                                            | (working style)                    |
-| 19  | Default tool set (`bash`, `read`, `write`, `edit`, `glob`, `grep`) lives on a `Filesystem` class, unprefixed       | `references/024`                   |
-| 20  | Default agent routes via `@ai-sdk/openai-compatible`                                                               | `references/025`                   |
-| 21  | Build first, harden later — no dep patches, no speculative error handling, no stability work in early iter         | `references/026`                   |
-| 22  | Harness throws if no channels found at startup (no transports = no purpose, revisit when REPL/cron/headless lands) | `references/027`                   |
-| 23  | Tool names are `snake_case` (`web_fetch`, `web_search`); single-word tools already conform                         | `references/028`                   |
-| 24  | `skill`, `web_fetch`, `web_search` tools + custom tool loading from `cwd/tools/`; skills fully contained           | `references/029`                   |
-| 25  | Env via `readEnv(key, { description, schema? })` — Zod validation, immediate error, no extra deps                  | `references/035`                   |
-| 26  | `scanChannels` returns `Record<string, { adapter, allowlist }>` — single record, not split maps                    | (this file)                        |
+| #   | Decision                                                                                                           | Doc                              |
+| --- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
+| 1   | Channels are the parent; sessions are children of channels                                                         | `mnemonic/002`                   |
+| 2   | `openxyz/tools` re-exports `tool` from `ai` + `z` from `zod`                                                       | `mnemonic/003` (+ new direction) |
+| 3   | Scan `cwd/tools/[!_]*.{js,ts}` for custom tools                                                                    | `mnemonic/003`                   |
+| 4   | Skills from `cwd/skills/**/SKILL.md` only                                                                          | `mnemonic/006`                   |
+| 5   | VFS as the AI's entire world (`/home/openxyz` + `/mnt/*`)                                                          | `mnemonic/008`                   |
+| 6   | Stateless bash per call (`workdir` param, not `cd`)                                                                | `mnemonic/008`                   |
+| 7   | Harness is an opt-in menu per template                                                                             | `mnemonic/008`                   |
+| 8   | `openxyz.config.ts` (TypeScript) for mount config                                                                  | `mnemonic/008`                   |
+| 9   | Per-user sessions for Telegram (`telegram:<uid>`)                                                                  | `mnemonic/016`                   |
+| 10  | Fire-and-forget bridge handlers (avoid chat-sdk LockError)                                                         | `mnemonic/004`                   |
+| 11  | Trust chat-sdk to render markdown per platform — no manual fallbacks in bridge code                                | `mnemonic/022`                   |
+| 12  | Build on Vercel AI SDK, not fork opencode                                                                          | `mnemonic/012`                   |
+| 13  | All channels go through `chat` + `@chat-adapter/*` (no direct platform SDKs)                                       | `mnemonic/022`                   |
+| 14  | Reference opencode at `../opencode` (not a dependency)                                                             | `mnemonic/020`                   |
+| 15  | Reference openclaw at `../openclaw` (not a dependency)                                                             | `mnemonic/021`                   |
+| 16  | Engine in `@openxyz/harness`; `openxyz` is the CLI + facade templates import from                                  | (this file)                      |
+| 17  | First-party wrappers for popular channels live at `openxyz/channels`                                               | `mnemonic/023`                   |
+| 18  | Log every direction/tradeoff/decision to `working/NNN-*.md` proactively                                            | (working style)                  |
+| 19  | Default tool set (`bash`, `read`, `write`, `edit`, `glob`, `grep`) lives on a `Filesystem` class, unprefixed       | `mnemonic/024`                   |
+| 20  | Default agent routes via `@ai-sdk/openai-compatible`                                                               | `mnemonic/025`                   |
+| 21  | Build first, harden later — no dep patches, no speculative error handling, no stability work in early iter         | `mnemonic/026`                   |
+| 22  | Harness throws if no channels found at startup (no transports = no purpose, revisit when REPL/cron/headless lands) | `mnemonic/027`                   |
+| 23  | Tool names are `snake_case` (`web_fetch`, `web_search`); single-word tools already conform                         | `mnemonic/028`                   |
+| 24  | `skill`, `web_fetch`, `web_search` tools + custom tool loading from `cwd/tools/`; skills fully contained           | `mnemonic/029`                   |
+| 25  | Env via `readEnv(key, { description, schema? })` — Zod validation, immediate error, no extra deps                  | `mnemonic/035`                   |
+| 26  | `scanChannels` returns `Record<string, { adapter, allowlist }>` — single record, not split maps                    | (this file)                      |
 
 ## Patterns to learn from
 
-From `references/013-opencode-architecture-learnings.md` and `references/014-opencode-code-style-guide.md`:
+From `mnemonic/013-opencode-architecture-learnings.md` and `mnemonic/014-opencode-code-style-guide.md`:
 
 - **Namespace pattern** — `export namespace X { ... }` per domain
 - **Zod + `z.infer` pairs** for every exported schema; `.describe()` every field the LLM sees
@@ -187,7 +187,7 @@ From `references/013-opencode-architecture-learnings.md` and `references/014-ope
 - **`@/` path alias** for internal imports
 - **Tool wrapper pattern** — auto validation + output truncation around the AI SDK `tool()` primitive
 
-## Agentic loop (from `references/018`)
+## Agentic loop (from `mnemonic/018`)
 
 15 techniques for reliable AI agent loops built on AI SDK `streamText()`. Essentials:
 
@@ -204,8 +204,8 @@ From `references/013-opencode-architecture-learnings.md` and `references/014-ope
 
 1. `child_process.spawnSync` + `stdio: "inherit"` is unreliable for nested Bun processes — TTY handoff fails. Use `Bun.spawn` with the exact dev command.
 2. Do not import `chat` under `--conditions=browser` — transitive deps touch `document`.
-3. chat-sdk thread handlers must be fire-and-forget. Holding the lock across `await` causes `LockError` on concurrent messages (`references/004`, `references/022`).
-4. Telegram markdown posts need a plain-text fallback — the parser rejects some outputs (`references/004`).
+3. chat-sdk thread handlers must be fire-and-forget. Holding the lock across `await` causes `LockError` on concurrent messages (`mnemonic/004`, `mnemonic/022`).
+4. Telegram markdown posts need a plain-text fallback — the parser rejects some outputs (`mnemonic/004`).
 5. `MountableFs` options shape is `{ mounts: [{ mountPoint, filesystem }] }`, not `{ mounts: { path: fs } }`.
 
 ## Code style
@@ -244,7 +244,7 @@ When in doubt, ask: "could a future maintainer reconstruct this reasoning from a
 - `working/` is the design scratchpad — "log this" = create or update a numbered working doc
 - When debugging, ask for actual command output rather than guessing
 
-Full notes in `references/015`.
+Full notes in `mnemonic/015`.
 
 ## Publishing
 
