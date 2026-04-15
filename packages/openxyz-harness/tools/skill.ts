@@ -2,6 +2,7 @@ import { join, dirname } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
 import matter from "gray-matter";
+// Scanning lives in the openxyz CLI layer; harness parses raw content only.
 
 // TODO: SKILL.md frontmatter could support `allowed-tools` to restrict which tools the agent
 //  can use while executing a skill (e.g. research skill only allows web_search + web_fetch).
@@ -14,29 +15,13 @@ export interface SkillInfo {
   content: string;
 }
 
-export async function scanSkills(cwd: string): Promise<SkillInfo[]> {
-  const glob = new Bun.Glob("skills/**/SKILL.md");
-  const skills: SkillInfo[] = [];
-
-  for await (const rel of glob.scan({ cwd })) {
-    const abs = join(cwd, rel);
-    const raw = await Bun.file(abs).text();
-    const { data, content } = matter(raw);
-
-    if (!data.name || !data.description) {
-      console.warn(`[openxyz] ${rel} missing name or description in frontmatter, skipping`);
-      continue;
-    }
-
-    skills.push({
-      name: data.name,
-      description: data.description,
-      location: abs,
-      content,
-    });
+export function parseSkill(path: string, raw: string): SkillInfo | undefined {
+  const { data, content } = matter(raw);
+  if (!data.name || !data.description) {
+    console.warn(`[openxyz] ${path} missing name or description in frontmatter, skipping`);
+    return undefined;
   }
-
-  return skills.sort((a, b) => a.name.localeCompare(b.name));
+  return { name: data.name, description: data.description, location: path, content };
 }
 
 export function createSkillTool(skills: SkillInfo[]) {
