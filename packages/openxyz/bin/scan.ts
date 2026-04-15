@@ -1,80 +1,82 @@
-import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { Tool } from "ai";
-import type { ChannelFile } from "@openxyz/harness/channels";
-import type { AgentDef } from "@openxyz/harness/agents/factory";
-import type { SkillInfo } from "@openxyz/harness/tools/skill";
-import type { OpenXyzTemplate } from "@openxyz/harness/openxyz";
-import { buildChannelFile } from "@openxyz/harness/channels";
-import { parseAgent } from "@openxyz/harness/agents/factory";
-import { parseSkill } from "@openxyz/harness/tools/skill";
+import { join } from "node:path";
 
-export async function scanTemplate(cwd: string): Promise<OpenXyzTemplate> {
-  const [channels, tools, agents, skills, agentsmd] = await Promise.all([
-    scanChannels(cwd),
-    scanTools(cwd),
-    scanAgents(cwd),
+/**
+ * Filesystem enumeration of a template. No module execution, no file reads —
+ * just paths keyed by name. Consumers decide what to do with them:
+ *
+ * - `openxyz start` loads modules + parses markdown (see `loadTemplate`)
+ * - `openxyz build` code-gens static imports
+ *
+ * Every value is a path relative to `cwd`.
+ */
+export type OpenXyzTemplateFiles = {
+  cwd: string;
+  channels: Record<string, string>;
+  tools: Record<string, string>;
+  agents: Record<string, string>;
+  skills: Record<string, string>;
+  /** Top-level markdown injected into prompts, e.g. `agents` → `AGENTS.md`. */
+  mds: Record<string, string>;
+  /** All files that should be packed into the runtime VFS. */
+  vfs: string[];
+};
+
+export async function scanTemplate(cwd: string): Promise<OpenXyzTemplateFiles> {
+  const [channels, tools, agents, skills, vfs] = await Promise.all([
+    scanNamed(cwd, "channels/[!_]*.ts", /\.ts$/),
+    scanNamed(cwd, "tools/[!_]*.{js,ts}", /\.(js|ts)$/),
+    scanNamed(cwd, "agents/[!_]*.md", /\.md$/),
     scanSkills(cwd),
-    loadAgentsMd(cwd),
+    scanVfs(cwd),
   ]);
-  return { cwd, channels, tools, agents, skills, mds: { agents: agentsmd } };
+
+  const mds: Record<string, string> = {};
+  if (existsSync(join(cwd, "AGENTS.md"))) mds.agents = "AGENTS.md";
+
+  return { cwd, channels, tools, agents, skills, mds, vfs };
 }
 
-export async function scanChannels(cwd: string): Promise<Record<string, ChannelFile>> {
-  const glob = new Bun.Glob("channels/[!_]*.ts");
-  const channels: Record<string, ChannelFile> = {};
-  for await (const path of glob.scan({ cwd })) {
-    const name = path.split("/").pop()!.replace(/\.ts$/, "");
-    const mod = await import(join(cwd, path));
-    channels[name] = buildChannelFile(mod, name);
+async function scanNamed(cwd: string, pattern: string, stripExt: RegExp): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for await (const path of new Bun.Glob(pattern).scan({ cwd })) {
+    const name = path.split("/").pop()!.replace(stripExt, "");
+    out[name] = path;
   }
-  return channels;
+  return out;
 }
 
-export async function scanTools(cwd: string): Promise<Record<string, Tool>> {
-  const glob = new Bun.Glob("tools/[!_]*.{js,ts}");
-  const tools: Record<string, Tool> = {};
-  for await (const rel of glob.scan({ cwd })) {
-    const file = rel.split("/").pop()!;
-    const name = file.replace(/\.(js|ts)$/, "");
-    const mod = await import(join(cwd, rel));
-    if (!mod.default) {
-      console.warn(`[openxyz] tools/${file} has no default export, skipping`);
-      continue;
+/** Skills are keyed by their containing directory name: `skills/<name>/SKILL.md`. */
+async function scanSkills(cwd: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for await (const path of new Bun.Glob("skills/**/SKILL.md").scan({ cwd })) {
+    const parts = path.split("/");
+    const name = parts[parts.length - 2]!;
+    out[name] = path;
+  }
+  return out;
+}
+
+/**
+ * Walks the template dir for every file that should be packed into the runtime
+ * VFS — source files, markdown, package.json. Skips build output, deps, git,
+ * env files, and the usual darwin noise.
+ */
+async function scanVfs(cwd: string): Promise<string[]> {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const patterns = ["channels/**/*", "tools/**/*", "agents/**/*", "skills/**/*", "*.md", "package.json"];
+  for (const pattern of patterns) {
+    for await (const rel of new Bun.Glob(pattern).scan({ cwd, onlyFiles: true })) {
+      if (seen.has(rel) || isExcluded(rel)) continue;
+      seen.add(rel);
+      out.push(rel);
     }
-    tools[name] = mod.default;
   }
-  return tools;
+  return out;
 }
 
-export async function scanAgents(cwd: string): Promise<Record<string, AgentDef>> {
-  const dir = join(cwd, "agents");
-  if (!existsSync(dir)) return {};
-  const glob = new Bun.Glob("[!_]*.md");
-  const agents: Record<string, AgentDef> = {};
-  for await (const rel of glob.scan({ cwd: dir })) {
-    const name = rel.replace(/\.md$/, "");
-    const raw = await Bun.file(join(dir, rel)).text();
-    const def = parseAgent(name, raw);
-    if (def) agents[name] = def;
-  }
-  return agents;
-}
-
-export async function scanSkills(cwd: string): Promise<SkillInfo[]> {
-  const glob = new Bun.Glob("skills/**/SKILL.md");
-  const skills: SkillInfo[] = [];
-  for await (const rel of glob.scan({ cwd })) {
-    const abs = join(cwd, rel);
-    const raw = await Bun.file(abs).text();
-    const info = parseSkill(abs, raw);
-    if (info) skills.push(info);
-  }
-  return skills.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function loadAgentsMd(cwd: string): Promise<string | undefined> {
-  const path = join(cwd, "AGENTS.md");
-  if (!existsSync(path)) return undefined;
-  return Bun.file(path).text();
+function isExcluded(rel: string): boolean {
+  const skip = ["node_modules/", ".openxyz/", ".vercel/", ".git/", ".env", ".DS_Store"];
+  return skip.some((p) => rel.startsWith(p) || rel.endsWith(p) || rel.includes(`/${p.replace(/\/$/, "")}/`));
 }

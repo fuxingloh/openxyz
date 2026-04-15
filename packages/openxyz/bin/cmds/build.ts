@@ -2,6 +2,7 @@ import type { BunPlugin } from "bun";
 import { Command } from "commander";
 import { existsSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { resolve, relative, join } from "node:path";
+import { scanTemplate, type OpenXyzTemplateFiles } from "../scan";
 
 export default new Command("build")
   .description("Build the openxyz agent for deployment")
@@ -24,118 +25,57 @@ async function action(opts: Opts): Promise<void> {
   await buildVercel(cwd);
 }
 
-type TemplateFiles = {
-  channels: { name: string; absPath: string }[];
-  tools: { name: string; absPath: string }[];
-  agents: { name: string; absPath: string }[];
-  /** `absPath` = build-time import path; `vfsPath` = runtime `/home/openxyz/...` path. */
-  skills: { absPath: string; vfsPath: string }[];
-  agentsMd?: string;
-  /** Relative paths of every template file to pack into the VFS snapshot. */
-  vfs: string[];
-};
+function generateEntrypoint(files: OpenXyzTemplateFiles): string {
+  const abs = (p: string) => join(files.cwd, p);
+  const vfsPath = (p: string) => "/home/openxyz/" + p;
 
-/**
- * Enumerate template files as absolute paths for build-time code-gen.
- * The build command uses this to emit static imports — no module execution.
- *
- * `vfs` lists every template file that should be packed into the in-memory
- * filesystem at runtime. We walk the template dir once, skipping the build
- * and dep directories plus env files (credentials).
- */
-async function enumerateTemplateFiles(cwd: string): Promise<TemplateFiles> {
-  const channels: TemplateFiles["channels"] = [];
-  for await (const rel of new Bun.Glob("channels/[!_]*.ts").scan({ cwd })) {
-    channels.push({ name: rel.split("/").pop()!.replace(/\.ts$/, ""), absPath: join(cwd, rel) });
-  }
-  const tools: TemplateFiles["tools"] = [];
-  for await (const rel of new Bun.Glob("tools/[!_]*.{ts,js}").scan({ cwd })) {
-    tools.push({
-      name: rel
-        .split("/")
-        .pop()!
-        .replace(/\.(ts|js)$/, ""),
-      absPath: join(cwd, rel),
-    });
-  }
-  const agents: TemplateFiles["agents"] = [];
-  for await (const rel of new Bun.Glob("agents/[!_]*.md").scan({ cwd })) {
-    agents.push({ name: rel.split("/").pop()!.replace(/\.md$/, ""), absPath: join(cwd, rel) });
-  }
-  const skills: TemplateFiles["skills"] = [];
-  for await (const rel of new Bun.Glob("skills/**/SKILL.md").scan({ cwd })) {
-    skills.push({ absPath: join(cwd, rel), vfsPath: "/home/openxyz/" + rel });
-  }
-  const agentsMdPath = join(cwd, "AGENTS.md");
-  const agentsMd = existsSync(agentsMdPath) ? agentsMdPath : undefined;
-
-  const vfs: string[] = [];
-  const seen = new Set<string>();
-  const globs = ["channels/**/*", "tools/**/*", "agents/**/*", "skills/**/*", "*.md", "package.json"];
-  for (const pattern of globs) {
-    for await (const rel of new Bun.Glob(pattern).scan({ cwd, onlyFiles: true })) {
-      if (seen.has(rel)) continue;
-      if (isExcluded(rel)) continue;
-      seen.add(rel);
-      vfs.push(rel);
-    }
-  }
-
-  return { channels, tools, agents, skills, agentsMd, vfs };
-}
-
-function isExcluded(rel: string): boolean {
-  const skip = ["node_modules/", ".openxyz/", ".vercel/", ".git/", ".env", ".DS_Store"];
-  return skip.some((p) => rel.startsWith(p) || rel.endsWith(p) || rel.includes(`/${p.replace(/\/$/, "")}/`));
-}
-
-function generateEntrypoint(files: TemplateFiles): string {
   const imports: string[] = [];
   const body: string[] = [];
 
   const harnessImports = ["OpenXyz", "buildChannelFile", "createChatState"];
-  if (files.agents.length > 0) harnessImports.push("parseAgent");
-  if (files.skills.length > 0) harnessImports.push("parseSkill");
+  if (Object.keys(files.agents).length > 0) harnessImports.push("parseAgent");
+  if (Object.keys(files.skills).length > 0) harnessImports.push("parseSkill");
   imports.push(`import { ${harnessImports.join(", ")} } from "openxyz/_harness";`);
 
   const channelEntries: string[] = [];
-  files.channels.forEach((c, i) => {
+  Object.entries(files.channels).forEach(([name, path], i) => {
     const id = `__ch${i}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(c.absPath)};`);
-    channelEntries.push(`  ${JSON.stringify(c.name)}: buildChannelFile(${id}, ${JSON.stringify(c.name)}),`);
+    imports.push(`import * as ${id} from ${JSON.stringify(abs(path))};`);
+    channelEntries.push(`  ${JSON.stringify(name)}: buildChannelFile(${id}, ${JSON.stringify(name)}),`);
   });
 
   const toolEntries: string[] = [];
-  files.tools.forEach((t, i) => {
+  Object.entries(files.tools).forEach(([name, path], i) => {
     const id = `__tool${i}`;
-    imports.push(`import ${id} from ${JSON.stringify(t.absPath)};`);
-    toolEntries.push(`  ${JSON.stringify(t.name)}: ${id},`);
+    imports.push(`import ${id} from ${JSON.stringify(abs(path))};`);
+    toolEntries.push(`  ${JSON.stringify(name)}: ${id},`);
   });
 
   const agentEntries: string[] = [];
-  files.agents.forEach((a, i) => {
+  Object.entries(files.agents).forEach(([name, path], i) => {
     const id = `__agent${i}`;
-    imports.push(`import ${id} from ${JSON.stringify(a.absPath)} with { type: "text" };`);
+    imports.push(`import ${id} from ${JSON.stringify(abs(path))} with { type: "text" };`);
     agentEntries.push(
-      `  ...(function(){ const d = parseAgent(${JSON.stringify(a.name)}, ${id}); return d ? { ${JSON.stringify(a.name)}: d } : {}; })(),`,
+      `  ...(function(){ const d = parseAgent(${JSON.stringify(name)}, ${id}); return d ? { ${JSON.stringify(name)}: d } : {}; })(),`,
     );
   });
 
   const skillEntries: string[] = [];
-  files.skills.forEach((s, i) => {
+  Object.entries(files.skills).forEach(([_name, path], i) => {
     const id = `__skill${i}`;
-    imports.push(`import ${id} from ${JSON.stringify(s.absPath)} with { type: "text" };`);
+    imports.push(`import ${id} from ${JSON.stringify(abs(path))} with { type: "text" };`);
     // Location stored on the SkillInfo must be the runtime VFS path — the
     // skill tool uses it to list sibling files from the in-memory fs at cold
     // start, not the build machine's disk.
-    skillEntries.push(`  parseSkill(${JSON.stringify(s.vfsPath)}, ${id}),`);
+    skillEntries.push(`  parseSkill(${JSON.stringify(vfsPath(path))}, ${id}),`);
   });
 
-  let agentsMdId: string | undefined;
-  if (files.agentsMd) {
-    agentsMdId = "__agentsMd";
-    imports.push(`import ${agentsMdId} from ${JSON.stringify(files.agentsMd)} with { type: "text" };`);
-  }
+  const mdIds: Record<string, string> = {};
+  Object.entries(files.mds).forEach(([slot, rel], i) => {
+    const id = `__md${i}`;
+    imports.push(`import ${id} from ${JSON.stringify(abs(rel))} with { type: "text" };`);
+    mdIds[slot] = id;
+  });
 
   body.push(`const openxyz = new OpenXyz({`);
   // Runtime cwd = function directory on Vercel, not the build machine's path.
@@ -148,14 +88,15 @@ function generateEntrypoint(files: TemplateFiles): string {
       ? `  skills: [\n${skillEntries.join("\n")}\n  ].filter((s): s is NonNullable<typeof s> => !!s),`
       : `  skills: [],`,
   );
-  if (agentsMdId) body.push(`  mds: { agents: ${agentsMdId} },`);
+  const mdEntries = Object.entries(mdIds).map(([slot, id]) => `    ${JSON.stringify(slot)}: ${id},`);
+  if (mdEntries.length > 0) body.push(`  mds: {\n${mdEntries.join("\n")}\n  },`);
   body.push(`});`);
   body.push(`await openxyz.init({ state: await createChatState(openxyz.cwd) });`);
   body.push(``);
   body.push(`export default {`);
   body.push(`  async fetch(request: Request): Promise<Response> {`);
   body.push(`    const { pathname } = new URL(request.url);`);
-  body.push(`    const match = pathname.match(/^\\/webhooks\\/([^/]+)\\/?$/);`);
+  body.push(`    const match = pathname.match(/^\\/api\\/webhooks\\/([^/]+)\\/?$/);`);
   body.push(`    if (!match) return new Response("not found", { status: 404 });`);
   body.push(`    const handler = openxyz.webhooks[match[1]!];`);
   body.push(`    if (!handler) return new Response(\`unknown adapter: \${match[1]}\`, { status: 404 });`);
@@ -167,9 +108,9 @@ function generateEntrypoint(files: TemplateFiles): string {
 }
 
 async function buildVercel(cwd: string): Promise<void> {
-  const files = await enumerateTemplateFiles(cwd);
+  const files = await scanTemplate(cwd);
 
-  if (files.channels.length === 0) {
+  if (Object.keys(files.channels).length === 0) {
     console.error("[openxyz] no channels found under channels/*.ts — nothing to build");
     process.exit(1);
   }
