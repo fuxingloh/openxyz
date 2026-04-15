@@ -1,4 +1,4 @@
-import { Bash, MountableFs, ReadWriteFs, OverlayFs } from "just-bash";
+import { Bash, MountableFs, ReadWriteFs, OverlayFs, type IFileSystem, type MountConfig } from "just-bash";
 import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
@@ -16,20 +16,13 @@ export type FilesystemConfig = z.infer<typeof FilesystemConfigSchema>;
 export class FilesystemTools {
   readonly #bash: Bash;
 
-  constructor(cwd: string, config?: FilesystemConfig) {
-    const permissions = typeof config === "string" ? { harness: config } : (config ?? {});
-
+  constructor(cwd: string, config: FilesystemConfig) {
     // TODO(?): IMPORTANT make sure .env, .gitignore, node_modules (maybe?) are not exposed to the agent-
     //  OpenXyz Approved Plugins Hub?
     //  Advanced users can just give "real Bash" access
-    const harness =
-      (permissions.harness ?? "read-write") === "read-write"
-        ? new ReadWriteFs({ root: cwd })
-        : new OverlayFs({ root: cwd, readOnly: true });
-
-    // TODO: mount /mnt/* paths from perms when external mounts are implemented
     const fs = new MountableFs({
-      mounts: [{ mountPoint: "/home/openxyz", filesystem: harness }],
+      // TODO: mount /mnt/* paths from perms when external mounts are implemented
+      mounts: [getHomeMountConfig(cwd, config)],
     });
     this.#bash = new Bash({ fs, cwd: "/home/openxyz", python: true, javascript: true });
   }
@@ -170,4 +163,18 @@ export class FilesystemTools {
       }),
     };
   }
+}
+
+function getHomeMountConfig(cwd: string, config: FilesystemConfig): MountConfig {
+  if (config === "read-write") {
+    return { mountPoint: "/home/openxyz", filesystem: new ReadWriteFs({ root: cwd }) };
+  }
+
+  if (typeof config === "object") {
+    if (config["/home/openxyz"] === "read-write") {
+      return { mountPoint: "/home/openxyz", filesystem: new ReadWriteFs({ root: cwd }) };
+    }
+  }
+
+  return { mountPoint: "/home/openxyz", filesystem: new OverlayFs({ root: cwd, readOnly: true }) };
 }
