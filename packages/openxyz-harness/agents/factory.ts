@@ -1,6 +1,5 @@
 import { ToolLoopAgent, tool, stepCountIs } from "ai";
 import type { Tool } from "ai";
-import { basename } from "node:path";
 import { z } from "zod";
 import matter from "gray-matter";
 import { createSkillTool, type SkillInfo } from "../tools/skill";
@@ -70,12 +69,10 @@ export function parseAgent(name: string, raw: string): AgentDef | undefined {
 
 export class AgentFactory {
   readonly #template: OpenXyzTemplate;
-  readonly #home: string;
   readonly #defs: Record<string, AgentDef>;
 
   constructor(template: OpenXyzTemplate) {
     this.#template = template;
-    this.#home = `/home/${basename(template.cwd)}`;
     this.#defs = { general, explore, research, compact, ...template.agents };
   }
 
@@ -202,7 +199,7 @@ export class AgentFactory {
 
     const fsConfig = def.filesystem;
     const access = typeof fsConfig === "string" ? fsConfig : (fsConfig?.["harness"] ?? "read-write");
-    parts.push(["## Environment", "", `- Home: ${this.#home}`, `- Filesystem: ${access}`].join("\n"));
+    parts.push(["## Environment", "", `- Home: /home/openxyz`, `- Filesystem: ${access}`].join("\n"));
 
     if (def.prompt) {
       parts.push(def.prompt);
