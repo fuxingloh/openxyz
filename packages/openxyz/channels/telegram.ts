@@ -98,11 +98,11 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
      */
     reply: async (thread: Thread, message: Message<TelegramRaw>) => {
       if (thread.isDM) {
-        return { agent: "general", typing: true };
+        return { agent: "auto", typing: true };
       }
 
       if (message.isMention || isReplyToBot(thread, message)) {
-        return { agent: "general", typing: true, reaction: "👀" };
+        return { agent: "auto", typing: true, reaction: "👀" };
       }
 
       // Default is doing nothing.
