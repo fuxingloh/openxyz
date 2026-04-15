@@ -10,14 +10,10 @@
     "tools.ts",
     "channels/*",
     "env.ts",
-    "build.ts",
-    "state.ts",
     "tsconfig.json"
   ],
   "dependencies": {
-    "@chat-adapter/state-pg": "catalog:",
     "@chat-adapter/telegram": "catalog:",
-    "@electric-sql/pglite": "^0.4",
     "@openxyz/harness": "workspace:*",
     "chat": "catalog:",
     "commander": "^14.0.3",

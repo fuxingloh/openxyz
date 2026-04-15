@@ -1,7 +1,7 @@
 import { OpenXyz } from "@openxyz/harness/openxyz";
+import { createChatState } from "@openxyz/harness/databases";
 import { Command } from "commander";
 import { scanTemplate } from "../scan";
-import { createState } from "../../state";
 
 export default new Command("start").option("-p, --port <port>", "Port to listen on").action(action);
 
@@ -13,7 +13,7 @@ async function action(): Promise<void> {
   }
 
   const openxyz = new OpenXyz(template);
-  const state = await createState(template.cwd);
+  const state = await createChatState(template.cwd);
   await openxyz.init({ state });
   console.log("openxyz running. Ctrl-C to quit.");
 
