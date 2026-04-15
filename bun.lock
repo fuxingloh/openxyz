@@ -19,9 +19,7 @@
       "version": "0.0.0",
       "bin": "bin/bin.ts",
       "dependencies": {
-        "@chat-adapter/state-pg": "catalog:",
         "@chat-adapter/telegram": "catalog:",
-        "@electric-sql/pglite": "^0.4",
         "@openxyz/harness": "workspace:*",
         "chat": "catalog:",
         "commander": "^14.0.3",
@@ -40,14 +38,18 @@
       "version": "0.0.0",
       "dependencies": {
         "@ai-sdk/openai-compatible": "catalog:",
+        "@chat-adapter/state-pg": "catalog:",
+        "@electric-sql/pglite": "^0.4",
         "chat": "catalog:",
         "gray-matter": "^4.0.3",
         "just-bash": "^2",
+        "pg": "^8.20.0",
         "turndown": "^7.2.4",
         "zod": "^4",
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/pg": "^8.20.0",
         "@types/turndown": "^5.0.6",
       },
       "peerDependencies": {
@@ -140,6 +142,8 @@
     "@types/ms": ["@types/ms@2.1.0", "", {}, "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA=="],
 
     "@types/node": ["@types/node@25.6.0", "", { "dependencies": { "undici-types": "~7.19.0" } }, "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ=="],
+
+    "@types/pg": ["@types/pg@8.20.0", "", { "dependencies": { "@types/node": "*", "pg-protocol": "*", "pg-types": "^2.2.0" } }, "sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow=="],
 
     "@types/turndown": ["@types/turndown@5.0.6", "", {}, "sha512-ru00MoyeeouE5BX4gRL+6m/BsDfbRayOskWqUvh7CLGW+UXxHQItqALa38kKnOiZPqJrtzJUgAC2+F0rL1S4Pg=="],
 
