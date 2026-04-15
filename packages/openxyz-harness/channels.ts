@@ -32,8 +32,8 @@ export type ChannelFile<Raw = unknown> = {
    */
   adapter: Adapter;
   /**
-   * Dynamic environment frame — prepended fresh on every reply, not cached.
-   * Use for values that change per-request (current datetime, thread name, etc.).
+   * Environment frame — prepended on top, do not use unstable data.
+   * Use for values that change per-request (thread name, etc.). Session-scoped.
    * Return lines; the harness joins with `\n` and wraps into a system message.
    */
   environment: (thread: Thread, message: Message<Raw>) => Promise<string[]>;

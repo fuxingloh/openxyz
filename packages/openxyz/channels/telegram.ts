@@ -86,10 +86,7 @@ export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
       });
     },
     environment: async (thread: Thread, _message: Message<TelegramRaw>) => {
-      return [
-        `Current datetime: ${new Date().toISOString()}`,
-        thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`,
-      ];
+      return [thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`];
     },
     /**
      * Default reply if no `export function reply` is provided in the channel file.
