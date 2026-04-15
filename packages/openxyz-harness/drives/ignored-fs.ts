@@ -9,8 +9,10 @@ type DirentEntry = Awaited<ReturnType<NonNullable<IFileSystem["readdirWithFileTy
  * invisible — reads, writes, stats, and directory traversal behave as if the
  * path does not exist.
  *
- * Patterns use `Bun.Glob` semantics — remember that a single `*` does not
- * cross `/`, so pass `foo/**` (not `foo/*`) to hide a directory recursively.
+ * Patterns use `Bun.Glob` semantics, plus an ancestor check: a path is
+ * ignored if the path itself *or any parent directory* matches any glob.
+ * That way `".openxyz"` alone hides the directory and everything under it,
+ * no separate `".openxyz/**"` entry needed.
  */
 export class IgnoredFs implements IFileSystem {
   readonly #globs: Bun.Glob[];
@@ -23,9 +25,14 @@ export class IgnoredFs implements IFileSystem {
   }
 
   #isIgnored(path: string): boolean {
-    const norm = path.replace(/^\/+/, "");
-    if (norm === "") return false;
-    return this.#globs.some((g) => g.match(norm));
+    let p = path.replace(/^\/+/, "");
+    while (p !== "") {
+      if (this.#globs.some((g) => g.match(p))) return true;
+      const slash = p.lastIndexOf("/");
+      if (slash === -1) break;
+      p = p.slice(0, slash);
+    }
+    return false;
   }
 
   async readFile(path: string, options?: ReadFileOpt) {

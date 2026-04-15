@@ -8,7 +8,8 @@ import { IgnoredFs } from "./ignored-fs.ts";
  * `packages/openxyz/bin/scan.ts` so the build-time pack step strips them
  * from the packed snapshot. Keep both in sync.
  */
-const IGNORES = [".env*", ".openxyz/**", ".vercel/**"];
+// `**/.env*` catches nested `.env` files too (e.g. templates with subprojects).
+const IGNORES = ["**/.env*", ".openxyz", ".vercel"];
 
 /**
  * Drive backing the agent's home directory.
