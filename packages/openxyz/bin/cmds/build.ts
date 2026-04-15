@@ -2,7 +2,7 @@ import type { BunPlugin } from "bun";
 import { Command } from "commander";
 import { existsSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { resolve, relative, join } from "node:path";
-import { scanTemplate, type OpenXyzTemplateFiles } from "../scan";
+import { scanTemplate, type OpenXyzFiles } from "../scan";
 
 export default new Command("build")
   .description("Build the openxyz agent for deployment")
@@ -25,34 +25,35 @@ async function action(opts: Opts): Promise<void> {
   await buildVercel(cwd);
 }
 
-function generateEntrypoint(files: OpenXyzTemplateFiles): string {
-  const abs = (p: string) => join(files.cwd, p);
+function generateEntrypoint(scan: OpenXyzFiles): string {
+  const abs = (p: string) => join(scan.cwd, p);
   const vfsPath = (p: string) => "/home/openxyz/" + p;
+  const t = scan.template;
 
   const imports: string[] = [];
   const body: string[] = [];
 
   const harnessImports = ["OpenXyz", "buildChannelFile", "createChatState"];
-  if (Object.keys(files.agents).length > 0) harnessImports.push("parseAgent");
-  if (Object.keys(files.skills).length > 0) harnessImports.push("parseSkill");
+  if (Object.keys(t.agents).length > 0) harnessImports.push("parseAgent");
+  if (Object.keys(t.skills).length > 0) harnessImports.push("parseSkill");
   imports.push(`import { ${harnessImports.join(", ")} } from "openxyz/_harness";`);
 
   const channelEntries: string[] = [];
-  Object.entries(files.channels).forEach(([name, path], i) => {
+  Object.entries(t.channels).forEach(([name, path], i) => {
     const id = `__ch${i}`;
     imports.push(`import * as ${id} from ${JSON.stringify(abs(path))};`);
     channelEntries.push(`  ${JSON.stringify(name)}: buildChannelFile(${id}, ${JSON.stringify(name)}),`);
   });
 
   const toolEntries: string[] = [];
-  Object.entries(files.tools).forEach(([name, path], i) => {
+  Object.entries(t.tools).forEach(([name, path], i) => {
     const id = `__tool${i}`;
     imports.push(`import ${id} from ${JSON.stringify(abs(path))};`);
     toolEntries.push(`  ${JSON.stringify(name)}: ${id},`);
   });
 
   const agentEntries: string[] = [];
-  Object.entries(files.agents).forEach(([name, path], i) => {
+  Object.entries(t.agents).forEach(([name, path], i) => {
     const id = `__agent${i}`;
     imports.push(`import ${id} from ${JSON.stringify(abs(path))} with { type: "text" };`);
     agentEntries.push(
@@ -61,7 +62,7 @@ function generateEntrypoint(files: OpenXyzTemplateFiles): string {
   });
 
   const skillEntries: string[] = [];
-  Object.entries(files.skills).forEach(([_name, path], i) => {
+  Object.entries(t.skills).forEach(([_name, path], i) => {
     const id = `__skill${i}`;
     imports.push(`import ${id} from ${JSON.stringify(abs(path))} with { type: "text" };`);
     // Location stored on the SkillInfo must be the runtime VFS path — the
@@ -71,7 +72,7 @@ function generateEntrypoint(files: OpenXyzTemplateFiles): string {
   });
 
   const mdIds: Record<string, string> = {};
-  Object.entries(files.mds).forEach(([slot, rel], i) => {
+  Object.entries(t.mds).forEach(([slot, rel], i) => {
     const id = `__md${i}`;
     imports.push(`import ${id} from ${JSON.stringify(abs(rel))} with { type: "text" };`);
     mdIds[slot] = id;
@@ -108,9 +109,9 @@ function generateEntrypoint(files: OpenXyzTemplateFiles): string {
 }
 
 async function buildVercel(cwd: string): Promise<void> {
-  const files = await scanTemplate(cwd);
+  const scan = await scanTemplate(cwd);
 
-  if (Object.keys(files.channels).length === 0) {
+  if (Object.keys(scan.template.channels).length === 0) {
     console.error("[openxyz] no channels found under channels/*.ts — nothing to build");
     process.exit(1);
   }
@@ -118,14 +119,14 @@ async function buildVercel(cwd: string): Promise<void> {
   const buildDir = resolve(cwd, ".openxyz/build");
   mkdirSync(buildDir, { recursive: true });
   const entrypoint = resolve(buildDir, "server.ts");
-  await Bun.write(entrypoint, generateEntrypoint(files));
+  await Bun.write(entrypoint, generateEntrypoint(scan));
 
   const outputDir = resolve(cwd, ".vercel/output");
   rmSync(outputDir, { recursive: true, force: true });
   const funcDir = resolve(outputDir, "functions/index.func");
   mkdirSync(funcDir, { recursive: true });
 
-  const homePlugin = inMemoryHomePlugin(cwd, files.vfs);
+  const homePlugin = inMemoryHomePlugin(cwd, scan.files);
   const harnessPlugin = virtualHarnessPlugin();
 
   const result = await Bun.build({
