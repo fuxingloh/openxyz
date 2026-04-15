@@ -1,6 +1,7 @@
 import { createTelegramAdapter, type TelegramAdapterConfig, type TelegramRawMessage } from "@chat-adapter/telegram";
 import { type AiMessage, type AiMessagePart, type Message, toAiMessages } from "chat";
 import type { ChannelFile, Thread } from "@openxyz/harness/channels";
+import { backend } from "../backend";
 
 export type { Thread, Message, ReplyAction } from "@openxyz/harness/channels";
 
@@ -51,7 +52,16 @@ type TelegramForwardOrigin =
   | { type: "channel"; chat: TelegramChat; message_id: number; author_signature?: string };
 
 export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
-  const adapter = createTelegramAdapter(opts);
+  // On Vercel, the function is serverless — polling would block forever and
+  // bleed connections. Require webhook mode; the user runs Telegram's
+  // `setWebhook` once, pointing at `https://<deploy>/webhooks/telegram`. The
+  // adapter verifies the incoming request via TELEGRAM_WEBHOOK_SECRET_TOKEN
+  // (or `secretToken` in opts) — set it or requests run unverified.
+  const mode: TelegramAdapterConfig["mode"] = backend() === "vercel" ? "webhook" : "polling";
+  const adapter = createTelegramAdapter({
+    ...opts,
+    mode,
+  });
 
   // TODO(?): I'm thinking maybe we should split context up
   //  - context     -> Messages to send over. (where to put summarization),
