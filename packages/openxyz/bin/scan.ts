@@ -27,7 +27,7 @@ export type OpenXyzFiles = {
   files: string[];
 };
 
-export async function scanTemplate(cwd: string): Promise<OpenXyzFiles> {
+export async function scan(cwd: string): Promise<OpenXyzFiles> {
   const [channels, tools, agents, models, skills, files] = await Promise.all([
     scanNamed(cwd, "channels/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanNamed(cwd, "tools/[!_]*.{js,ts}", /\.(js|ts)$/),
