@@ -9,7 +9,7 @@
     "bin",
     "tools.ts",
     "channels/*",
-    "providers/*",
+    "models/*",
     "backend.ts",
     "env.ts",
     "tsconfig.json"
