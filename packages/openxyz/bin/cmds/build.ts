@@ -221,7 +221,7 @@ async function generateEntrypoint(
   body.push(`    if (!match) return new Response("not found", { status: 404 });`);
   body.push(`    const handler = openxyz.webhooks[match[1]!];`);
   body.push(`    if (!handler) return new Response(\`unknown adapter: \${match[1]}\`, { status: 404 });`);
-  body.push(`    return handler(request, { waitUntil });`);
+  body.push(`    return handler(request, { waitUntil: (task) => waitUntil(task) });`);
   body.push(`  },`);
   body.push(`};`);
 
