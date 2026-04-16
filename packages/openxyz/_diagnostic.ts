@@ -21,6 +21,10 @@ export async function runBisect(): Promise<void> {
   await import("@openxyz/harness/tools/web");
   console.log("[stage] 4 ok");
 
+  console.log("[stage] 4.5 importing gray-matter (suspected culprit) …");
+  await import("gray-matter");
+  console.log("[stage] 4.5 ok");
+
   console.log("[stage] 5 importing @openxyz/harness/tools/skill …");
   await import("@openxyz/harness/tools/skill");
   console.log("[stage] 5 ok");
