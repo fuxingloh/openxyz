@@ -68,23 +68,48 @@ export class OpenXyz {
     // chat-sdk dispatch is tiered with early returns (mnemonic/059).
     // Fan out every incoming-message tier into a single `onMessage` so channel
     // files own the decision via `action()` regardless of how chat-sdk routed.
-    chat.onDirectMessage((thread, message) => {
-      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    // Handlers await — serverless invocations run one message at a time, so the
+    // LockError risk from mnemonic/004 (long-running local process with
+    // concurrent messages) doesn't apply. Awaiting keeps the Vercel function
+    // alive through the full onMessage flow instead of getting cut short and
+    // redispatched via Redis.
+    chat.onDirectMessage(async (thread, message) => {
+      try {
+        await this.onMessage(thread, message);
+      } catch (err) {
+        console.error("[openxyz] onMessage failed", err);
+      }
     });
-    chat.onNewMention((thread, message) => {
+    chat.onNewMention(async (thread, message) => {
       // First @-mention in an unsubscribed (typically group) thread — subscribe
       // so follow-ups flow through onSubscribedMessage (mnemonic/050).
-      thread.subscribe().catch((err) => console.warn("[openxyz] thread.subscribe failed", err));
-      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+      try {
+        await thread.subscribe();
+      } catch (err) {
+        console.warn("[openxyz] thread.subscribe failed", err);
+      }
+      try {
+        await this.onMessage(thread, message);
+      } catch (err) {
+        console.error("[openxyz] onMessage failed", err);
+      }
     });
-    chat.onSubscribedMessage((thread, message) => {
-      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    chat.onSubscribedMessage(async (thread, message) => {
+      try {
+        await this.onMessage(thread, message);
+      } catch (err) {
+        console.error("[openxyz] onMessage failed", err);
+      }
     });
     // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
     // (typically random group chatter). Channel `reply()` decides whether to
     // engage; returning `{}` stays silent.
-    chat.onNewMessage(/.+/, (thread, message) => {
-      this.onMessage(thread, message).catch((err) => console.error("[openxyz] onMessage failed", err));
+    chat.onNewMessage(/.+/, async (thread, message) => {
+      try {
+        await this.onMessage(thread, message);
+      } catch (err) {
+        console.error("[openxyz] onMessage failed", err);
+      }
     });
 
     // initialize() auto-starts polling for adapters in "auto" mode when no webhook is configured.
