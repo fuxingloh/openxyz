@@ -24,12 +24,12 @@ export default async function auto(): Promise<LanguageModel> {
   const modelId = sep === -1 ? "" : process.env.OPENXYZ_MODEL.slice(sep + 1);
 
   switch (provider) {
-    case "opencode":
-      return (await import("./providers/opencode")).default(modelId);
-    case "bedrock":
-      return (await import("./providers/bedrock")).default(modelId);
-    case "openrouter":
-      return (await import("./providers/openrouter")).default(modelId);
+    // case "opencode":
+    //   return (await import("./providers/opencode")).default(modelId);
+    // case "bedrock":
+    //   return (await import("./providers/bedrock")).default(modelId);
+    // case "openrouter":
+    //   return (await import("./providers/openrouter")).default(modelId);
     // case "vercel":
     //   return (await import("./providers/vercel")).default(modelId);
     default:
