@@ -329,6 +329,8 @@ function virtualHarnessPlugin(): BunPlugin {
   // uneven support for bare subpath resolution past the top level. Absolute
   // paths bypass package resolution entirely and always work.
   const harnessRoot = new URL("../../../openxyz-harness/", import.meta.url).pathname;
+  const openxyzRoot = new URL("../../", import.meta.url).pathname;
+  const vercelFunctions = Bun.resolveSync("@vercel/functions", openxyzRoot);
 
   return {
     name: "openxyz-virtual-harness",
@@ -343,11 +345,11 @@ function virtualHarnessPlugin(): BunPlugin {
           `export { OpenXyz } from ${JSON.stringify(harnessRoot + "openxyz.ts")};`,
           `export { buildChannelFile } from ${JSON.stringify(harnessRoot + "channels.ts")};`,
           `export { createChatState } from ${JSON.stringify(harnessRoot + "databases/index.ts")};`,
-          // waitUntil is not a harness concern per se, but @vercel/functions is
-          // an openxyz dep — re-exporting here lets the generated entrypoint
-          // pull it through the same virtual module instead of adding a
-          // separate bare-specifier import that template cwd can't resolve.
-          `export { waitUntil } from "@vercel/functions";`,
+          // waitUntil: @vercel/functions is an openxyz dep. Bare specifier
+          // doesn't resolve from inside the virtual-module namespace, so we
+          // pre-resolve to an absolute path at build-plugin setup (same
+          // trick harness paths use above).
+          `export { waitUntil } from ${JSON.stringify(vercelFunctions)};`,
         ].join("\n"),
       }));
     },
