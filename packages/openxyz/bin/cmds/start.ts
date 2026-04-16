@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Tool } from "ai";
+import type { LanguageModel, Tool } from "ai";
 import { OpenXyz, type OpenXyzTemplate } from "@openxyz/harness/openxyz";
 import { buildChannelFile, type ChannelFile } from "@openxyz/harness/channels";
 import { parseAgent, type AgentDef } from "@openxyz/harness/agents/factory";
@@ -66,6 +66,16 @@ async function loadTemplate(scan: OpenXyzFiles): Promise<OpenXyzTemplate> {
     if (def) agents[name] = def;
   }
 
+  const models: Record<string, LanguageModel> = {};
+  for (const [name, path] of Object.entries(t.models)) {
+    const mod = await import(abs(path));
+    if (!mod.default) {
+      console.warn(`[openxyz] models/${name} has no default export, skipping`);
+      continue;
+    }
+    models[name] = mod.default;
+  }
+
   const skills: SkillInfo[] = [];
   for (const path of Object.values(t.skills)) {
     const raw = await Bun.file(abs(path)).text();
@@ -77,5 +87,5 @@ async function loadTemplate(scan: OpenXyzFiles): Promise<OpenXyzTemplate> {
   const mds: { agents?: string } = {};
   if (t.mds.agents) mds.agents = await Bun.file(abs(t.mds.agents)).text();
 
-  return { cwd: scan.cwd, channels, tools, agents, skills, mds };
+  return { cwd: scan.cwd, channels, tools, agents, models, skills, mds };
 }
