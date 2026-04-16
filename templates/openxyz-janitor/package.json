@@ -3,6 +3,7 @@
   "private": true,
   "description": "Chief of Staff (Janitor) used by OpenXyz Team to build this project.",
   "scripts": {
+    "build": "openxyz build",
     "start": "openxyz start"
   },
   "dependencies": {
