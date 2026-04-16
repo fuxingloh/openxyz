@@ -30,8 +30,8 @@ export default async function auto(): Promise<LanguageModel> {
       return (await import("./providers/bedrock")).default(modelId);
     case "openrouter":
       return (await import("./providers/openrouter")).default(modelId);
-    case "vercel":
-      return (await import("./providers/vercel")).default(modelId);
+    // case "vercel":
+    //   return (await import("./providers/vercel")).default(modelId);
     default:
       throw new Error(`Unsupported OPENXYZ_MODEL provider: ${provider}`);
   }
