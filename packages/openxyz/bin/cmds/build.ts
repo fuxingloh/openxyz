@@ -232,7 +232,25 @@ async function buildVercel(cwd: string): Promise<void> {
   const buildDir = resolve(cwd, ".openxyz/build");
   mkdirSync(buildDir, { recursive: true });
   const entrypoint = resolve(buildDir, "server.ts");
-  await Bun.write(entrypoint, generateEntrypoint(files, usedModels, defaultAgents));
+
+  // DIAGNOSTIC MODE: writing a minimal stub instead of the real entrypoint to
+  // isolate the Vercel `ReadOnlyFileSystem` crash. Restore by swapping the
+  // `Bun.write` line below.
+  const MINIMAL_ENTRYPOINT = `console.log("[minimal] server.ts module load");
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const { pathname } = new URL(request.url);
+    console.log(\`[minimal] fetch \${request.method} \${pathname}\`);
+    return new Response("alive", {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
+`;
+  await Bun.write(entrypoint, MINIMAL_ENTRYPOINT);
+  // await Bun.write(entrypoint, generateEntrypoint(files, usedModels, defaultAgents));
 
   const outputDir = resolve(cwd, ".vercel/output");
   rmSync(outputDir, { recursive: true, force: true });
