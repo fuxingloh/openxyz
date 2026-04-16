@@ -18,6 +18,8 @@ export type OpenXyzFiles = {
     channels: Record<string, string>;
     tools: Record<string, string>;
     agents: Record<string, string>;
+    /** Named `LanguageModel` instances. Flat namespace — `providers/<name>.ts` is merged in. */
+    models: Record<string, string>;
     skills: Record<string, string>;
     /** Top-level markdown injected into prompts, e.g. `agents` → `AGENTS.md`. */
     mds: Record<string, string>;
@@ -26,10 +28,11 @@ export type OpenXyzFiles = {
 };
 
 export async function scanTemplate(cwd: string): Promise<OpenXyzFiles> {
-  const [channels, tools, agents, skills, files] = await Promise.all([
-    scanNamed(cwd, "channels/[!_]*.ts", /\.ts$/),
+  const [channels, tools, agents, models, skills, files] = await Promise.all([
+    scanNamed(cwd, "channels/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanNamed(cwd, "tools/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanNamed(cwd, "agents/[!_]*.md", /\.md$/),
+    scanNamed(cwd, "models/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanSkills(cwd),
     scanFiles(cwd),
   ]);
@@ -37,7 +40,7 @@ export async function scanTemplate(cwd: string): Promise<OpenXyzFiles> {
   const mds: Record<string, string> = {};
   if (existsSync(join(cwd, "AGENTS.md"))) mds.agents = "AGENTS.md";
 
-  return { cwd, template: { channels, tools, agents, skills, mds }, files };
+  return { cwd, template: { channels, tools, agents, models, skills, mds }, files };
 }
 
 async function scanNamed(cwd: string, pattern: string, stripExt: RegExp): Promise<Record<string, string>> {
