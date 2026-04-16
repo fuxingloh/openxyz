@@ -121,7 +121,7 @@ export class OpenXyz {
 
   /**
    * Per-adapter webhook handlers from chat-sdk. In webhook-mode deployments
-   * (Vercel, Bun.serve, etc.) route `/webhooks/:adapter` to `webhooks[adapter](request)`.
+   * (Vercel, Bun.serve, etc.) route `/api/webhooks/:adapter` to `webhooks[adapter](request)`.
    */
   get webhooks(): Record<string, (request: Request) => Promise<Response>> {
     if (!this.#chat) throw new Error("[openxyz] not initialized — call init() first");
@@ -171,11 +171,43 @@ export class OpenXyz {
       prompt: prompt,
     });
     console.log(`[openxyz] stream started, posting …`);
-    await thread.post(result.fullStream);
-    console.log(`[openxyz] thread.post done`);
+    try {
+      await thread.post(logStream(result.fullStream));
+      console.log(`[openxyz] thread.post done`);
+    } catch (err) {
+      console.error(`[openxyz] thread.post failed`, err);
+      // Mirror the nextjs-chat reference pattern: surface the error to the
+      // user instead of swallowing it. Matches examples/nextjs-chat/src/lib/bot.tsx.
+      const msg = err instanceof Error ? err.message : String(err);
+      await thread.post(`⚠️ Error generating reply: ${msg}`).catch((err) => {
+        console.error(`[openxyz] fallback error post failed`, err);
+      });
+    }
   }
 
   async stop(): Promise<void> {
     await this.#chat?.shutdown();
   }
+}
+
+/**
+ * Tee an async-iterable stream for diagnostic logging. Logs first-chunk
+ * latency, chunk type distribution, and total count. Passes chunks through
+ * unchanged so `thread.post` sees the original stream.
+ */
+async function* logStream<T extends { type?: string }>(stream: AsyncIterable<T>): AsyncIterable<T> {
+  const t0 = Date.now();
+  const types: Record<string, number> = {};
+  let count = 0;
+  for await (const chunk of stream) {
+    if (count === 0) console.log(`[openxyz] first chunk +${Date.now() - t0}ms type=${chunk.type ?? "?"}`);
+    count++;
+    const k = chunk.type ?? "?";
+    types[k] = (types[k] ?? 0) + 1;
+    if (count % 25 === 0) {
+      console.log(`[openxyz] stream progress count=${count} types=${JSON.stringify(types)}`);
+    }
+    yield chunk;
+  }
+  console.log(`[openxyz] stream ended count=${count} durationMs=${Date.now() - t0} types=${JSON.stringify(types)}`);
 }

@@ -208,15 +208,15 @@ async function generateEntrypoint(
   body.push(``);
   // `waitUntil` is the load-bearing bit on Vercel. chat-sdk dispatches
   // messages as fire-and-forget background tasks (chat.ts `processMessage`);
-  // without waitUntil, Vercel kills the lambda as soon as the 200 response
-  // ships, cutting the agent stream short. Vercel then retries the webhook
-  // (or Redis re-dispatches) → the same message shows up across multiple
-  // requestIds. Passing waitUntil keeps the lambda alive until chat-sdk's
-  // internal task resolves. Re-exported via the harness virtual module since
-  // `@vercel/functions` is an openxyz dep, not template-resolvable.
+  // without waitUntil the lambda dies as soon as the 200 response ships,
+  // cutting the agent stream short. Uses `@vercel/functions.waitUntil`;
+  // per Vercel docs the Bun runtime runs on Fluid Compute "and supports the
+  // same core Vercel Functions features" as Node.js. Requires Fluid Compute
+  // to be enabled on the project (Dashboard → Settings → Functions).
   body.push(`export default {`);
   body.push(`  async fetch(request: Request): Promise<Response> {`);
   body.push(`    const { pathname } = new URL(request.url);`);
+  body.push(`    console.log(\`[openxyz] fetch \${request.method} \${pathname}\`);`);
   body.push(`    const match = pathname.match(/^\\/api\\/webhooks\\/([^/]+)\\/?$/);`);
   body.push(`    if (!match) return new Response("not found", { status: 404 });`);
   body.push(`    const handler = openxyz.webhooks[match[1]!];`);
@@ -357,10 +357,6 @@ function virtualHarnessPlugin(): BunPlugin {
           `export { OpenXyz } from ${JSON.stringify(harnessRoot + "openxyz.ts")};`,
           `export { buildChannelFile } from ${JSON.stringify(harnessRoot + "channels.ts")};`,
           `export { createChatState } from ${JSON.stringify(harnessRoot + "databases/index.ts")};`,
-          // waitUntil: @vercel/functions is an openxyz dep. Bare specifier
-          // doesn't resolve from inside the virtual-module namespace, so we
-          // pre-resolve to an absolute path at build-plugin setup (same
-          // trick harness paths use above).
           `export { waitUntil } from ${JSON.stringify(vercelFunctions)};`,
         ].join("\n"),
       }));
