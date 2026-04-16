@@ -6,12 +6,13 @@
   "type": "module",
   "bin": "bin/bin.ts",
   "files": [
-    "bin",
-    "tools.ts",
-    "channels/*",
-    "models/**",
+    "agents/*",
     "backend.ts",
+    "bin",
+    "channels/*",
     "env.ts",
+    "models/**",
+    "tools.ts",
     "tsconfig.json"
   ],
   "dependencies": {
