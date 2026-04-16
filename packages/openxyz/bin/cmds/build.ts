@@ -378,9 +378,16 @@ function inMemoryHomePlugin(cwd: string, vfs: string[]): BunPlugin {
           ...entries,
           `};`,
           ``,
+          // Match the real drives/home.ts shape — constructor(cwd, permission),
+          // `mountConfig(mountPoint)` method. FilesystemTools passes cwd and
+          // permission in, and calls `.mountConfig("/home/openxyz")`.
           `export class HomeDrive {`,
-          `  getMountConfig() {`,
-          `    return { mountPoint: "/home/openxyz", filesystem: new InMemoryFs(files) };`,
+          `  constructor(cwd, permission) {`,
+          `    this.cwd = cwd;`,
+          `    this.permission = permission;`,
+          `  }`,
+          `  mountConfig(mountPoint) {`,
+          `    return { mountPoint, filesystem: new InMemoryFs(files) };`,
           `  }`,
           `}`,
         ].join("\n");
