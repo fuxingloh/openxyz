@@ -19,6 +19,8 @@
       "version": "0.0.0",
       "bin": "bin/bin.ts",
       "dependencies": {
+        "@ai-sdk/amazon-bedrock": "4.0.93",
+        "@ai-sdk/openai-compatible": "2.0.41",
         "@chat-adapter/telegram": "catalog:",
         "@openxyz/harness": "workspace:*",
         "chat": "catalog:",

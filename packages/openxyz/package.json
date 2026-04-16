@@ -9,11 +9,14 @@
     "bin",
     "tools.ts",
     "channels/*",
+    "providers/*",
     "backend.ts",
     "env.ts",
     "tsconfig.json"
   ],
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "4.0.93",
+    "@ai-sdk/openai-compatible": "2.0.41",
     "@chat-adapter/telegram": "catalog:",
     "@openxyz/harness": "workspace:*",
     "chat": "catalog:",
