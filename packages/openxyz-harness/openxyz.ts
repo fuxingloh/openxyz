@@ -1,7 +1,7 @@
 import { Chat } from "chat";
-import type { Thread as ChatThread, Message as ChatMessage, StateAdapter } from "chat";
+import type { Thread as ChatSdkThread, Message as ChatSdkMessage, StateAdapter } from "chat";
 import type { LanguageModel, Tool } from "ai";
-import type { ChannelFile } from "./channels";
+import type { Channel } from "./channels";
 import { AgentFactory, type AgentDef } from "./agents/factory";
 import type { SkillDef } from "./tools/skill";
 
@@ -11,7 +11,7 @@ import type { SkillDef } from "./tools/skill";
  */
 export type OpenXyzRuntime = {
   cwd: string;
-  channels: Record<string, ChannelFile>;
+  channels: Record<string, Channel>;
   tools: Record<string, Tool>;
   agents: Record<string, AgentDef>;
   /**
@@ -121,7 +121,7 @@ export class OpenXyz {
     return this.#chat.webhooks as Record<string, (request: Request) => Promise<Response>>;
   }
 
-  async onMessage(thread: ChatThread, message: ChatMessage): Promise<void> {
+  async onMessage(thread: ChatSdkThread, message: ChatSdkMessage): Promise<void> {
     await thread.subscribe();
     const channel = this.runtime.channels[thread.adapter.name];
     if (!channel) {

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { LanguageModel, Tool } from "ai";
 import { OpenXyz, type OpenXyzRuntime } from "@openxyz/harness/openxyz";
-import { buildChannelFile, type ChannelFile } from "@openxyz/harness/channels";
+import { loadChannel, type Channel } from "@openxyz/harness/channels";
 import { parseAgent, type AgentDef } from "@openxyz/harness/agents/factory";
 import { parseSkill, type SkillDef } from "@openxyz/harness/tools/skill";
 import { createChatState } from "@openxyz/harness/databases";
@@ -43,10 +43,10 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
   const abs = (p: string) => join(scan.cwd, p);
   const t = scan.template;
 
-  const channels: Record<string, ChannelFile> = {};
+  const channels: Record<string, Channel> = {};
   for (const [name, path] of Object.entries(t.channels)) {
     const mod = await import(abs(path));
-    channels[name] = buildChannelFile(mod, name);
+    channels[name] = loadChannel(mod, name);
   }
 
   const tools: Record<string, Tool> = {};

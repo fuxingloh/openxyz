@@ -130,13 +130,13 @@ async function generateEntrypoint(
   // at build time below and emit JSON literals. That removes the `yaml`
   // (formerly `gray-matter`) parser from the production bundle entirely.
   // See mnemonic/068 for the gray-matter→yaml crash story.
-  imports.push(`import { OpenXyz, buildChannelFile, createChatState, waitUntil } from "openxyz/_harness";`);
+  imports.push(`import { OpenXyz, loadChannel, createChatState, waitUntil } from "openxyz/_harness";`);
 
   const channelEntries: string[] = [];
   Object.entries(t.channels).forEach(([name, path], i) => {
     const id = `__ch${i}`;
     imports.push(`import * as ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    channelEntries.push(`  ${JSON.stringify(name)}: buildChannelFile(${id}, ${JSON.stringify(name)}),`);
+    channelEntries.push(`  ${JSON.stringify(name)}: loadChannel(${id}, ${JSON.stringify(name)}),`);
   });
 
   const toolEntries: string[] = [];
@@ -376,7 +376,7 @@ function virtualHarnessPlugin(): BunPlugin {
         loader: "ts",
         contents: [
           `export { OpenXyz } from ${JSON.stringify(harnessRoot + "openxyz.ts")};`,
-          `export { buildChannelFile } from ${JSON.stringify(harnessRoot + "channels.ts")};`,
+          `export { loadChannel } from ${JSON.stringify(harnessRoot + "channels.ts")};`,
           `export { createChatState } from ${JSON.stringify(harnessRoot + "databases/index.ts")};`,
           `export { waitUntil } from ${JSON.stringify(vercelFunctions)};`,
         ].join("\n"),

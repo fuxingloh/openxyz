@@ -1,72 +1,76 @@
 import { createTelegramAdapter, type TelegramAdapterConfig, type TelegramRawMessage } from "@chat-adapter/telegram";
 import { type AiMessage, type AiMessagePart, type Message, toAiMessages } from "chat";
-import type { ChannelFile, Thread } from "@openxyz/harness/channels";
+import type { Adapter as ChatSdkAdapter } from "chat";
+import type { ModelMessage } from "ai";
+import { Channel, type ReplyAction, type Thread } from "@openxyz/harness/channels";
 import { backend } from "../backend";
 
 export type { Thread, Message, ReplyAction } from "@openxyz/harness/channels";
+export { Channel } from "@openxyz/harness/channels";
 
 export type TelegramConfig = TelegramAdapterConfig & {
   botToken: string;
 };
 
-export function telegram(opts: TelegramConfig): ChannelFile<TelegramRaw> {
-  // On Vercel, the function is serverless — polling would block forever and
-  // bleed connections. Require webhook mode; the user runs Telegram's
-  // `setWebhook` once, pointing at `https://<deploy>/webhooks/telegram`. The
-  // adapter verifies the incoming request via TELEGRAM_WEBHOOK_SECRET_TOKEN
-  // (or `secretToken` in opts) — set it or requests run unverified.
-  const mode: TelegramAdapterConfig["mode"] = backend() === "vercel" ? "webhook" : "polling";
-  const adapter = createTelegramAdapter({
-    ...opts,
-    mode,
-  });
+/**
+ * Concrete Telegram `Channel`. Templates typically subclass this and
+ * override `reply()` (and optionally `filter()`), then `export default new
+ * SubclassName(opts)`. Call `super.reply(thread, message)` to defer to this
+ * class's default dispatch once your gate checks pass.
+ */
+export class TelegramChannel extends Channel<TelegramRaw> {
+  readonly adapter: ChatSdkAdapter;
 
-  // TODO(?): I'm thinking maybe we should split context up
-  //  - context     -> Messages to send over. (where to put summarization),
-  //  maybe I want thread.recentMessages instead of thread.channel.messages?
-  //  - environment -> Padded below messages
+  constructor(opts: TelegramConfig) {
+    super();
+    // On Vercel, the function is serverless — polling would block forever
+    // and bleed connections. Require webhook mode; the user runs Telegram's
+    // `setWebhook` once, pointing at `https://<deploy>/webhooks/telegram`.
+    // The adapter verifies the incoming request via TELEGRAM_WEBHOOK_SECRET_TOKEN
+    // (or `secretToken` in opts) — set it or requests run unverified.
+    const mode: TelegramAdapterConfig["mode"] = backend() === "vercel" ? "webhook" : "polling";
+    this.adapter = createTelegramAdapter({ ...opts, mode });
+  }
 
-  return {
-    adapter,
-    context: async (thread: Thread, _message: Message<TelegramRaw>) => {
-      // Telegram "threads" are forum topics — a supergroup splits into many.
-      // `thread.channel.messages` iterates newest-first across every topic,
-      // auto-paginating via the adapter (cache-backed on Telegram).
-      // TODO: Busy-group duplicate-fetch bug — see mnemonic/065. This runs per
-      //  incoming message and returns a growing cached window each time, causing
-      //  replies to stale turns. Likely fix: skip fetch when `reply()` returns {},
-      //  mark the triggering message, dedupe by id.
-      const messages: Message<TelegramRaw>[] = [];
-      for await (const msg of thread.channel.messages) {
-        messages.push(msg as Message<TelegramRaw>);
-        if (messages.length >= 50) break;
-      }
-      console.log(`[telegram] context fetched ${messages.length} messages for channel ${thread.channel.id}`);
-      return await toAiMessages(messages.reverse(), {
-        includeNames: !thread.isDM,
-        transformMessage: (aiMsg, src) => annotate(aiMsg, src, adapter.botUserId),
-      });
-    },
-    environment: async (thread: Thread, _message: Message<TelegramRaw>) => {
-      return [thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`];
-    },
-    /**
-     * Default reply if no `export function reply` is provided in the channel file.
-     * Also used when `export function reply() { return true }`, true -> uses this.
-     */
-    reply: async (thread: Thread, message: Message<TelegramRaw>) => {
-      if (thread.isDM) {
-        return { agent: "auto", typing: true };
-      }
+  async context(thread: Thread, _message: Message<TelegramRaw>): Promise<ModelMessage[]> {
+    // Telegram "threads" are forum topics — a supergroup splits into many.
+    // `thread.channel.messages` iterates newest-first across every topic,
+    // auto-paginating via the adapter (cache-backed on Telegram).
+    // TODO: Busy-group duplicate-fetch bug — see mnemonic/065. This runs per
+    //  incoming message and returns a growing cached window each time, causing
+    //  replies to stale turns. Likely fix: skip fetch when `reply()` returns {},
+    //  mark the triggering message, dedupe by id.
+    const botUserId = (this.adapter as { botUserId?: string }).botUserId;
+    const messages: Message<TelegramRaw>[] = [];
+    for await (const msg of thread.channel.messages) {
+      const m = msg as Message<TelegramRaw>;
+      if (this.filter && !this.filter(m, thread)) continue;
+      messages.push(m);
+      if (messages.length >= 50) break;
+    }
+    console.log(`[telegram] context fetched ${messages.length} messages for channel ${thread.channel.id}`);
+    return await toAiMessages(messages.reverse(), {
+      includeNames: !thread.isDM,
+      transformMessage: (aiMsg, src) => annotate(aiMsg, src, botUserId),
+    });
+  }
 
-      if (message.isMention || isReplyToBot(thread, message)) {
-        return { agent: "auto", typing: true, reaction: "👀" };
-      }
+  async environment(thread: Thread, _message: Message<TelegramRaw>): Promise<string[]> {
+    return [thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`];
+  }
 
-      // Default is doing nothing.
-      return {};
-    },
-  };
+  /**
+   * Default dispatch: respond to DMs, respond in groups only when @-mentioned
+   * or replied-to. Templates with allowlists typically check the allowlist
+   * first and then `return super.reply(thread, message)` to reuse this.
+   */
+  async reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
+    if (thread.isDM) return { agent: "auto", typing: true };
+    if (message.isMention || isReplyToBot(thread, message)) {
+      return { agent: "auto", typing: true, reaction: "👀" };
+    }
+    return {};
+  }
 }
 
 /**
