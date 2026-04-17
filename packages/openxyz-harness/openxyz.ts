@@ -40,9 +40,6 @@ export class OpenXyz {
     this.cwd = runtime.cwd;
     this.runtime = runtime;
     this.agentFactory = new AgentFactory(runtime);
-    console.log(
-      `[openxyz] constructed — cwd=${runtime.cwd} channels=[${Object.keys(runtime.channels).join(", ")}] tools=[${Object.keys(runtime.tools).join(", ")}] agents=[${Object.keys(runtime.agents).join(", ")}] models=[${Object.keys(runtime.models).join(", ")}] skills=${runtime.skills.length}`,
-    );
   }
 
   /**
@@ -56,7 +53,6 @@ export class OpenXyz {
       throw new Error("[openxyz] no channels provided — nothing to run");
     }
 
-    console.log(`[openxyz] init: creating chat with ${Object.keys(channels).length} channel(s)`);
     const chat = new Chat({
       adapters: Object.fromEntries(Object.entries(channels).map(([k, v]) => [k, v.adapter])) as Record<string, never>,
       state: opts.state,
@@ -112,11 +108,8 @@ export class OpenXyz {
       }
     });
 
-    // initialize() auto-starts polling for adapters in "auto" mode when no webhook is configured.
-    console.log(`[openxyz] init: chat.initialize() …`);
     await chat.initialize();
     this.#chat = chat;
-    console.log(`[openxyz] init: ready — webhooks=[${Object.keys(chat.webhooks ?? {}).join(", ")}]`);
   }
 
   /**
@@ -129,19 +122,13 @@ export class OpenXyz {
   }
 
   async onMessage(thread: ChatThread, message: ChatMessage): Promise<void> {
-    console.log(
-      `[openxyz] onMessage: adapter=${thread.adapter.name} thread=${thread.id} msg=${message.id} isDM=${thread.isDM} isMention=${(message as { isMention?: boolean }).isMention ?? false}`,
-    );
     await thread.subscribe();
     const channel = this.runtime.channels[thread.adapter.name];
     if (!channel) {
-      throw new Error(`[openxyz] received message for adapter "${thread.adapter.name}" but no channel config found`);
+      throw new Error(`[openxyz] no channel config for adapter "${thread.adapter.name}"`);
     }
 
     const reply = await channel.reply(thread, message);
-    console.log(
-      `[openxyz] reply action: agent=${reply.agent ?? "<none>"} typing=${!!reply.typing} reaction=${reply.reaction ?? "<none>"}`,
-    );
 
     if (reply.typing) {
       const status = typeof reply.typing === "string" ? reply.typing : undefined;
@@ -156,31 +143,19 @@ export class OpenXyz {
 
     if (!reply.agent) return;
 
-    console.log(`[openxyz] agentFactory.create(${reply.agent}) …`);
     const agent = await this.agentFactory.create(reply.agent);
-    console.log(`[openxyz] agent ready, fetching env+context …`);
     const [env, context] = await Promise.all([channel.environment(thread, message), channel.context(thread, message)]);
-    console.log(
-      `[openxyz] env+context ready (envLines=${env.length}, contextMsgs=${context.length}), calling agent.stream …`,
-    );
     // Env goes before the conversation, not after — Bedrock (and some other providers) reject system
-    // messages interleaved between user/assistant turns. Kept out of the cached `instructions` prefix
-    // because env is per-message dynamic (time, user, channel metadata).
+    // messages interleaved between user/assistant turns.
     const prompt = env.length > 0 ? [{ role: "system" as const, content: env.join("\n") }, ...context] : context;
-    const result = await agent.stream({
-      prompt: prompt,
-    });
-    console.log(`[openxyz] stream started, posting …`);
+    const result = await agent.stream({ prompt });
     try {
-      await thread.post(logStream(result.fullStream));
-      console.log(`[openxyz] thread.post done`);
+      await thread.post(result.fullStream);
     } catch (err) {
       console.error(`[openxyz] thread.post failed`, err);
-      // Mirror the nextjs-chat reference pattern: surface the error to the
-      // user instead of swallowing it. Matches examples/nextjs-chat/src/lib/bot.tsx.
       const msg = err instanceof Error ? err.message : String(err);
-      await thread.post(`⚠️ Error generating reply: ${msg}`).catch((err) => {
-        console.error(`[openxyz] fallback error post failed`, err);
+      await thread.post(`⚠️ Error generating reply: ${msg}`).catch((e) => {
+        console.error(`[openxyz] fallback error post failed`, e);
       });
     }
   }
@@ -188,26 +163,4 @@ export class OpenXyz {
   async stop(): Promise<void> {
     await this.#chat?.shutdown();
   }
-}
-
-/**
- * Tee an async-iterable stream for diagnostic logging. Logs first-chunk
- * latency, chunk type distribution, and total count. Passes chunks through
- * unchanged so `thread.post` sees the original stream.
- */
-async function* logStream<T extends { type?: string }>(stream: AsyncIterable<T>): AsyncIterable<T> {
-  const t0 = Date.now();
-  const types: Record<string, number> = {};
-  let count = 0;
-  for await (const chunk of stream) {
-    if (count === 0) console.log(`[openxyz] first chunk +${Date.now() - t0}ms type=${chunk.type ?? "?"}`);
-    count++;
-    const k = chunk.type ?? "?";
-    types[k] = (types[k] ?? 0) + 1;
-    if (count % 25 === 0) {
-      console.log(`[openxyz] stream progress count=${count} types=${JSON.stringify(types)}`);
-    }
-    yield chunk;
-  }
-  console.log(`[openxyz] stream ended count=${count} durationMs=${Date.now() - t0} types=${JSON.stringify(types)}`);
 }
