@@ -7,8 +7,7 @@ import build from "./cmds/build";
 
 const cli = new Command();
 
-// TODO(?): add description
-cli.name("openxyz").version(pkg.version);
+cli.name("openxyz").description("AI agent harness for agentic workflows").version(pkg.version);
 cli.addCommand(start);
 cli.addCommand(build);
 

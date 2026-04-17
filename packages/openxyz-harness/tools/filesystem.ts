@@ -26,10 +26,6 @@ export class FilesystemTools {
   readonly #bash: Bash;
 
   constructor(cwd: string, config: FilesystemConfig) {
-    // TODO(?): IMPORTANT make sure .env, .gitignore, node_modules (maybe?) are not exposed to the agent-
-    //  OpenXyz Approved Plugins Hub?
-    //  Advanced users can just give "real Bash" access
-
     const mounts: MountConfig[] = [];
     const homePermission = getMountPermission("/home/openxyz", config);
     if (homePermission) {

@@ -408,10 +408,16 @@ function inMemoryHomePlugin(cwd: string, vfs: string[]): BunPlugin {
         // Inline file contents as string literals. Text imports
         // (`with { type: "text" }`) get deduped with module imports of the
         // same path, so we can't reuse them — read the file ourselves here.
+        //
+        // Keys are relative to the mount root, not the VFS absolute path.
+        // `MountableFs` strips the mountPoint when routing, so an InMemoryFs
+        // mounted at `/home/openxyz` must store `/AGENTS.md` — storing it as
+        // `/home/openxyz/AGENTS.md` makes the agent see the file at
+        // `/home/openxyz/home/openxyz/AGENTS.md` (the prefix doubles).
         const entries: string[] = [];
         for (const rel of vfs) {
           const text = await Bun.file(join(cwd, rel)).text();
-          entries.push(`  ${JSON.stringify("/home/openxyz/" + rel)}: ${JSON.stringify(text)},`);
+          entries.push(`  ${JSON.stringify("/" + rel)}: ${JSON.stringify(text)},`);
         }
 
         const contents = [
