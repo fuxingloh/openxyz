@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@openxyz/channel-telegram",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "fuxingloh",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "tsconfig.json"
+  ],
+  "dependencies": {
+    "@chat-adapter/telegram": "catalog:",
+    "@openxyz/runtime": "workspace:*",
+    "chat": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "ai": "catalog:"
+  }
+}

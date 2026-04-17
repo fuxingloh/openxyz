@@ -7,7 +7,6 @@
   "bin": "bin/bin.ts",
   "files": [
     "agents/*",
-    "backend.ts",
     "bin",
     "channels/*",
     "env.ts",
@@ -18,7 +17,7 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "4.0.93",
     "@ai-sdk/openai-compatible": "2.0.41",
-    "@chat-adapter/telegram": "catalog:",
+    "@openxyz/channel-telegram": "workspace:*",
     "@openxyz/runtime": "workspace:*",
     "@vercel/functions": "^2",
     "chat": "catalog:",
