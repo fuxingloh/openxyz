@@ -20,6 +20,8 @@ export type OpenXyzFiles = {
     agents: Record<string, string>;
     /** Named `Model` instances (LanguageModel + systemPrompt). Flat namespace — `providers/<name>.ts` is merged in. */
     models: Record<string, string>;
+    /** Template-provided `Drive` instances. Filename `drives/<name>.ts` → mount `/mnt/<name>/`. */
+    drives: Record<string, string>;
     skills: Record<string, string>;
     /** Top-level markdown injected into prompts, e.g. `agents` → `AGENTS.md`. */
     mds: Record<string, string>;
@@ -28,11 +30,12 @@ export type OpenXyzFiles = {
 };
 
 export async function scanDir(cwd: string): Promise<OpenXyzFiles> {
-  const [channels, tools, agents, models, skills, files] = await Promise.all([
+  const [channels, tools, agents, models, drives, skills, files] = await Promise.all([
     scanNamed(cwd, "channels/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanNamed(cwd, "tools/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanNamed(cwd, "agents/[!_]*.md", /\.md$/),
     scanNamed(cwd, "models/[!_]*.{js,ts}", /\.(js|ts)$/),
+    scanNamed(cwd, "drives/[!_]*.{js,ts}", /\.(js|ts)$/),
     scanSkills(cwd),
     scanFiles(cwd),
   ]);
@@ -40,7 +43,7 @@ export async function scanDir(cwd: string): Promise<OpenXyzFiles> {
   const mds: Record<string, string> = {};
   if (existsSync(join(cwd, "AGENTS.md"))) mds.agents = "AGENTS.md";
 
-  return { cwd, template: { channels, tools, agents, models, skills, mds }, files };
+  return { cwd, template: { channels, tools, agents, models, drives, skills, mds }, files };
 }
 
 async function scanNamed(cwd: string, pattern: string, stripExt: RegExp): Promise<Record<string, string>> {
