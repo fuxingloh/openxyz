@@ -66,10 +66,14 @@ export abstract class Channel<Raw = unknown> {
  * Two template styles are supported and can be mixed:
  * 1. **Subclass** — define `class MyX extends TelegramChannel` and override
  *    `filter`/`reply`/... in the class. `export default new MyX(...)`.
+ *    Can use `super.reply(...)` / `this` to compose with the parent class.
  * 2. **Sibling exports** — `export default new TelegramChannel(...)` plus
  *    `export function filter(...)` / `export function reply(...)`. The
  *    sibling `reply` can return `boolean` (true → default, false → silent)
  *    or a full `ReplyAction` object.
+ *    Siblings are plain module functions, **not** class methods — no `this`,
+ *    no `super`. Use `true` from `reply` to fall through to the default
+ *    dispatch; for anything richer, switch to the subclass style.
  *
  * When both are present, sibling exports win (applied on top of the instance).
  */

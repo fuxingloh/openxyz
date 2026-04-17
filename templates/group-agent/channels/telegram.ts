@@ -1,11 +1,4 @@
-import {
-  isReplyToBot,
-  Message,
-  type ReplyAction,
-  TelegramChannel,
-  type TelegramRaw,
-  Thread,
-} from "openxyz/channels/telegram";
+import { isReplyToBot, Message, TelegramChannel, type TelegramRaw, Thread } from "openxyz/channels/telegram";
 import { readEnv, z } from "openxyz/env";
 
 // Group-agent allowlists **groups**, not individual users. A group ID is the
@@ -16,20 +9,18 @@ const groupAllowlist = readEnv("TELEGRAM_GROUP_ALLOWLIST", {
   schema: z.string().transform((s) => new Set(s.split(",").map((v) => v.trim()))),
 });
 
-class GroupTelegram extends TelegramChannel {
-  async reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
-    // DMs are out of scope for the group persona. Re-route users to a
-    // DM-capable template (pkbm-agent or openxyz-janitor).
-    if (thread.isDM) return {};
-    if (!groupAllowlist.has(thread.channel.id)) return {};
-    // Lurk unless addressed (mnemonic/050).
-    if (!message.isMention && !isReplyToBot(thread, message)) return {};
-    return super.reply(thread, message);
-  }
-}
-
-export default new GroupTelegram({
+export default new TelegramChannel({
   botToken: readEnv("TELEGRAM_BOT_TOKEN", {
     description: "Telegram Bot API token from @BotFather",
   }),
 });
+
+export function reply(thread: Thread, message: Message<TelegramRaw>) {
+  // DMs are out of scope for the group persona. Re-route users to a
+  // DM-capable template (pkbm-agent or openxyz-janitor).
+  if (thread.isDM) return false;
+  if (!groupAllowlist.has(thread.channel.id)) return false;
+  // Lurk unless addressed.
+  if (!message.isMention && !isReplyToBot(thread, message)) return false;
+  return true;
+}
