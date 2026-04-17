@@ -20,6 +20,12 @@ OpenXyz is an AI agent harness for human workflows — **not** a coding tool. A 
 
 The reference template is `templates/openxyz-janitor` — the team's own chief-of-staff, dogfooded.
 
+## Reference source (read these when the question touches them)
+
+- `../ai` — the `ai` SDK monorepo we depend on. Source for `ToolLoopAgent`, `wrapLanguageModel`, `convertToLanguageModelPrompt`, `streamText`, middleware spec, per-provider packages (`../ai/packages/{ai,anthropic,amazon-bedrock,openai,openai-compatible,gateway,...}`). Go here when you need exact types, marker shapes, or call semantics.
+- `../chat` — the chat-sdk monorepo. Source for `Chat`, `Thread`, `Adapter`, `toAiMessages`, `@chat-adapter/*`. Go here for dispatch tiering, thread lifecycle, webhook decoding, state adapter contracts.
+- Full reference checkouts table lives in `mnemonic/000-help.md`.
+
 ## Tech direction
 
 OpenXyz is **Vercel AI SDK-native**. All tool, agent, streaming, and model primitives come from `ai` (v6) and the `@ai-sdk/*` provider packages. `openxyz/tools` re-exports `tool` from `ai` and `z` from `zod`. No `@opencode-ai/*` or `opencode-ai` runtime dependency.
