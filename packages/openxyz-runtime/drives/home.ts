@@ -1,6 +1,6 @@
 import { ReadWriteFs, OverlayFs, type IFileSystem } from "just-bash";
-import type { Drive, Permission } from "./drive.ts";
-import { IgnoredFs } from "./ignored-fs.ts";
+import type { Drive, Permission } from "../drive.ts";
+import { IgnoredFs } from "../fs/ignored.ts";
 
 /**
  * Paths hidden from the agent — secrets (`.env*`) and local build/deploy

@@ -2,8 +2,8 @@ import { Bash, MountableFs, type MountConfig } from "just-bash";
 import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
-import type { Drive, Permission } from "../drives/drive.ts";
-import { ReadOnlyFs } from "../drives/readonly-fs";
+import type { Drive, Permission } from "../drive.ts";
+import { ReadOnlyFs } from "../fs/readonly";
 
 const MAX_BYTES = 50_000;
 

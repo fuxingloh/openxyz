@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { IgnoredFs } from "./ignored-fs.ts";
+import { IgnoredFs } from "./ignored.ts";
 
 const files = {
   "package.json": `{"name":"test"}`,

@@ -2,7 +2,7 @@ import { Chat } from "chat";
 import type { Thread as ChatSdkThread, Message as ChatSdkMessage, StateAdapter } from "chat";
 import type { LanguageModel, Tool } from "ai";
 import type { Channel } from "./channels";
-import type { Drive } from "./drives/drive";
+import type { Drive } from "./drive";
 import { AgentFactory, type AgentDef } from "./agents/factory";
 import type { SkillDef } from "./tools/skill";
 

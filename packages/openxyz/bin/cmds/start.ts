@@ -6,7 +6,7 @@ import { parseAgent, type AgentDef } from "@openxyz/runtime/agents/factory";
 import { parseSkill, type SkillDef } from "@openxyz/runtime/tools/skill";
 import { createChatState } from "@openxyz/runtime/databases";
 import { HomeDrive } from "@openxyz/runtime/drives/home";
-import type { Drive } from "@openxyz/runtime/drives/drive";
+import type { Drive } from "@openxyz/runtime/drive";
 import { Command } from "commander";
 import { scanDir, type OpenXyzFiles } from "../scan";
 

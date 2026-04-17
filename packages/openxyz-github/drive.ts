@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { add, branch, clone, commit, fastForward, push, remove, statusMatrix } from "isomorphic-git";
 import http from "isomorphic-git/http/node";
 import { OverlayFs, ReadWriteFs, type IFileSystem } from "just-bash";
-import type { Drive, Permission } from "@openxyz/runtime/drives/drive";
+import type { Drive, Permission } from "@openxyz/runtime/drive";
 
 export type GitHubDriveConfig = {
   owner: string;
