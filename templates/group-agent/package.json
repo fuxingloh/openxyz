@@ -1,0 +1,14 @@
+{
+  "name": "group-agent",
+  "private": true,
+  "scripts": {
+    "build": "openxyz build",
+    "start": "openxyz start"
+  },
+  "dependencies": {
+    "openxyz": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^6"
+  }
+}
