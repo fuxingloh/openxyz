@@ -1,7 +1,7 @@
 {
   "name": "openxyz",
   "version": "0.0.0",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "author": "fuxingloh",
   "type": "module",
   "bin": "bin/bin.ts",

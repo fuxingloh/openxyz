@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@openxyz/telegram",
   "version": "0.0.0",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "author": "fuxingloh",
   "type": "module",
   "exports": {
