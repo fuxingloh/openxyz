@@ -31,11 +31,14 @@ export const fetch_markdown = tool({
     url: z.url().describe("Fully-qualified http(s) URL of the page to read"),
   }),
   execute: async ({ url }) => {
-    const res = await fetch(`https://r.jina.ai/${url}`, {
+    const res = await fetch("https://r.jina.ai/", {
+      method: "POST",
       headers: {
         Accept: "application/json",
+        "Content-Type": "application/json",
         Authorization: `Bearer ${JINA_API_KEY}`,
       },
+      body: JSON.stringify({ url }),
     });
 
     if (!res.ok) {
