@@ -13,7 +13,7 @@ const AgentFrontmatterSchema = z.object({
   skills: z.array(z.string()).optional(),
   tools: z
     .record(z.string(), z.union([z.literal(true), z.literal(false), z.record(z.string(), z.unknown())]))
-    .optional(),
+    .default({ "*": true }),
   filesystem: FilesystemConfigSchema,
   /** Name from the models. Falls back to "auto" when omitted. */
   model: z.string().default("auto"),
@@ -42,6 +42,24 @@ function formatAgentList(defs: Record<string, AgentDef>): string {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((a) => `- **${a.name}**: ${a.description}`)
     .join("\n");
+}
+
+/**
+ * Minimal glob matcher for agent `tools:` frontmatter. Supports `*` (any run
+ * of chars including none) and `?` (single char). Fast-path for exact strings
+ * avoids regex allocation for the common case.
+ */
+function matchGlob(pattern: string, value: string): boolean {
+  if (!pattern.includes("*") && !pattern.includes("?")) return pattern === value;
+  const re = new RegExp(
+    "^" +
+      pattern
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".") +
+      "$",
+  );
+  return re.test(value);
 }
 
 export function parseAgent(name: string, raw: string): AgentDef | undefined {
@@ -154,13 +172,20 @@ export class AgentFactory {
       ...this.#runtime.tools,
     };
 
-    if (!def.tools) return all;
-
+    // Glob patterns (`nocodb_*`, `github_issues_*`) + exact-string matches in
+    // one pass. Last rule wins — iterate entries in declared order so
+    // `nocodb_*: true` then `nocodb_delete: false` produces the expected
+    // allow-with-one-deny result. Exact strings are just wildcard-free globs.
+    // Zod defaults an absent field to `{ "*": true }`, so this always runs.
+    const rules = Object.entries(def.tools);
     const filtered: Record<string, Tool> = {};
-    for (const [name, config] of Object.entries(def.tools)) {
-      if (config && all[name]) {
-        filtered[name] = all[name];
+    for (const [id, tool] of Object.entries(all)) {
+      let allowed = false;
+      for (const [pattern, config] of rules) {
+        if (!matchGlob(pattern, id)) continue;
+        allowed = !!config;
       }
+      if (allowed) filtered[id] = tool;
     }
     return filtered;
   }
