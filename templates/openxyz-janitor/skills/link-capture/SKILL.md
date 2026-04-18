@@ -12,7 +12,7 @@ The user pasted a URL. Capture it.
 
 1. **Fetch the page** with `web_fetch`. Extract: title, 2–3 sentence summary, 3–5 key points, author/source (domain), publish date if available. If the fetch fails, ask the user to paste title + summary manually.
 2. **Match to a narrative.** Call `nocodb_queryRecords` against the Narratives table. Pick the closest fit. If nothing fits, propose a new narrative with a short name and description.
-3. **Confirm in one line** — "Clipping as **{title}** → narrative: **{narrative}**. OK?" Skip confirmation if the user pasted the URL with no other message, or said go / just confirm / equivalent.
+3. **Confirm in one line** — "Capturing **{title}** → narrative: **{narrative}**. OK?" Skip confirmation if the user pasted the URL with no other message, or said go / just confirm / equivalent.
 4. **On confirm**, in this order:
    - If a new narrative was proposed: `nocodb_createRecords` on Narratives first, capture the id.
    - Write the rich note to `/mnt/documents/links/YYYY-MM-DD-{slug}.md`.
@@ -49,17 +49,13 @@ Path: `/mnt/documents/links/YYYY-MM-DD-{slug}.md`
 > {notable quote if available}
 ```
 
-## NocoDB Links record
+## Writing the Links row
 
-| Field     | Value                                   |
-| --------- | --------------------------------------- |
-| URL       | the URL                                 |
-| Title     | page title                              |
-| Source    | domain or author                        |
-| Date      | today's date (YYYY-MM-DD)               |
-| Summary   | 1–2 line summary                        |
-| Narrative | linked narrative record(s)              |
-| Doc Path  | `links/YYYY-MM-DD-{slug}.md` (relative) |
+Fields are defined in AGENTS.md. When populating:
+
+- `Date` — today in `YYYY-MM-DD`.
+- `Narrative` — pass the record **id** (not the name); linked-record field.
+- `Doc Path` — relative to `/mnt/documents/`, matches the file you just wrote.
 
 ## Slug rules
 
@@ -71,6 +67,4 @@ Path: `/mnt/documents/links/YYYY-MM-DD-{slug}.md`
 
 ## Notes
 
-- A bare URL with no message = capture request. Don't ask the user what they want.
-- Narrative is linked-record in NocoDB — pass the record id, not the name.
 - Don't paste the full fetched page body into chat — put it in the doc.

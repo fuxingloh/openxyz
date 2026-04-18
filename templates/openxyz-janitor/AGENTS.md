@@ -42,7 +42,7 @@ Two tables back structured tracking. Table names below are what the `nocodb_getT
 - `Description` (long text) — what this narrative covers
 - `Tags` (text) — comma-separated
 
-**Links** — every URL the team has clipped.
+**Links** — every URL the team has captured.
 
 - `URL` (URL)
 - `Title` (text, primary)
