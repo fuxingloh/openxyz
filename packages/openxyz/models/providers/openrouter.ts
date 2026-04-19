@@ -1,6 +1,6 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { Model } from "@openxyz/runtime/openxyz";
-import systemPrompt from "../prompts/system.md" with { type: "text" };
+import type { ModelExport } from "../../bin/load-model";
+import { lookupLimit } from "../_models-dev";
 
 // OpenRouter's OpenAI-compatible gateway. Requires `OPENROUTER_API_KEY`.
 // See https://openrouter.ai/docs for available model ids.
@@ -15,7 +15,12 @@ const or = createOpenAICompatible({
  * `@ai-sdk/openai-compatible`, which drops anthropic-style markers. Prompt
  * caching here would need `providerOptions.openaiCompatible.cache_control` and
  * verification that OpenRouter forwards it upstream.
+ *
+ * `limit` resolved from models.dev (`openrouter` provider key). No
+ * `systemPrompt` — runtime falls back to its default.
  */
-export default function openrouter(modelId: string): Model {
-  return { model: or(modelId), systemPrompt };
+export default async function openrouter(modelId: string): Promise<ModelExport> {
+  return Object.assign(or(modelId), {
+    limit: await lookupLimit("openrouter", modelId),
+  });
 }
