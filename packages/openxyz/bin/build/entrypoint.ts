@@ -45,7 +45,7 @@ export async function generateEntrypoint(
   // (formerly `gray-matter`) parser from the production bundle entirely.
   // See mnemonic/068 for the gray-matter→yaml crash story.
   imports.push(
-    `import { OpenXyz, loadChannel, createChatState, waitUntil, WorkspaceDrive, expandToolModule } from "openxyz/_runtime";`,
+    `import { OpenXyz, loadChannel, createChatState, waitUntil, WorkspaceDrive, loadTools, loadModel } from "openxyz/_runtime";`,
   );
 
   const channelEntries: string[] = [];
@@ -57,7 +57,7 @@ export async function generateEntrypoint(
 
   // Tools modules can default-export a tool(), an mcp(), or expose named
   // tool() exports. Discrimination (+ MCP connect + cleanup) happens at boot
-  // via `expandToolModule`. Namespace import so we capture every export.
+  // via `loadTools`. Namespace import so we capture every export.
   const toolModuleEntries: string[] = [];
   Object.entries(t.tools).forEach(([name, path], i) => {
     const id = `__tool${i}`;
@@ -132,7 +132,7 @@ export async function generateEntrypoint(
     body.push(`const __tools = {};`);
     body.push(`const __toolCleanup = [];`);
     body.push(`for (const { name, mod } of __toolModules) {`);
-    body.push(`  const expanded = await expandToolModule(name, mod);`);
+    body.push(`  const expanded = await loadTools(name, mod);`);
     body.push(`  Object.assign(__tools, expanded.tools);`);
     body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
     body.push(`}`);
