@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelMessage } from "ai";
-import { Session, type Thread } from "./channels.ts";
+import { estimateTokens, Session, type Thread } from "./channels.ts";
 
 type StateStore = { session?: ModelMessage[] } | null;
 
@@ -194,5 +194,56 @@ describe("Session scope", () => {
     const session = new Session(thread);
     await session.append([userMsg("hi")]);
     expect((await thread.state)?.session?.length).toBe(1);
+  });
+});
+
+describe("Session.replace", () => {
+  test("overwrites the full log atomically", async () => {
+    const session = new Session(makeThread(), "thread");
+    await session.append([userMsg("a"), userMsg("b"), userMsg("c")]);
+    await session.replace([{ role: "system", content: "summary" }, userMsg("d")]);
+    const msgs = await session.messages();
+    expect(msgs.length).toBe(2);
+    expect(msgs[0]).toEqual({ role: "system", content: "summary" });
+    expect(msgs[1]).toEqual(userMsg("d"));
+  });
+
+  test("replace with empty clears the session", async () => {
+    const session = new Session(makeThread(), "thread");
+    await session.append([userMsg("a")]);
+    await session.replace([]);
+    expect(await session.messages()).toEqual([]);
+  });
+
+  test("replace does not run tool-output pruning", async () => {
+    // caller owns what survives — replace writes verbatim.
+    const session = new Session(makeThread(), "thread");
+    const bigTool = toolResult("t1", "web_fetch", "X".repeat(1_000));
+    await session.replace([bigTool]);
+    const out = ((await session.messages())[0] as { content: Array<{ output: { value: string } }> }).content[0]!.output
+      .value;
+    expect(out).toBe("X".repeat(1_000));
+  });
+});
+
+describe("estimateTokens", () => {
+  test("empty array → 0", () => {
+    expect(estimateTokens([])).toBe(0);
+  });
+
+  test("scales with JSON size (rough bytes/4 heuristic)", () => {
+    const small = estimateTokens([userMsg("hi")]);
+    const large = estimateTokens([userMsg("X".repeat(1_000))]);
+    expect(large).toBeGreaterThan(small);
+    // 1000-char user message JSON ≈ 1040 bytes → ≈ 260 tokens. Loose bounds.
+    expect(large).toBeGreaterThan(200);
+    expect(large).toBeLessThan(400);
+  });
+
+  test("heuristic stays pure — no built-in safety margin", () => {
+    // SAFETY_MARGIN lives at the comparison call site, not inside the
+    // estimator (mnemonic/087). Guard against anyone baking it in here.
+    const bytes = JSON.stringify(userMsg("hello world")).length;
+    expect(estimateTokens([userMsg("hello world")])).toBe(Math.ceil(bytes / 4));
   });
 });

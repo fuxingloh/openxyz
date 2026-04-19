@@ -133,6 +133,30 @@ export class Session {
     const existing = pruneToolOutputs(await this.messages());
     await this.postable.setState({ session: [...existing, ...messages] });
   }
+
+  /**
+   * Overwrite the full session log atomically. Used by compaction
+   * (mnemonic/084) — replaces N old messages with `[summary, ...recent]`.
+   * No pruning pass: the caller picked what survives.
+   */
+  async replace(messages: ModelMessage[]): Promise<void> {
+    await this.postable.setState({ session: messages });
+  }
+}
+
+/**
+ * Rough token estimate from JSON-serialized size. Industry rule of thumb is
+ * ~4 bytes/token for English-heavy LLM content; good enough for threshold
+ * decisions (compaction trigger, prune budget). Not accurate enough for hard
+ * context-window budgeting — swap in a real tokenizer if we ever need that.
+ *
+ * See mnemonic/084 — TODO to extend `Model` with `contextLimit` so
+ * per-model budgets replace the universal 40K.
+ */
+export function estimateTokens(messages: ModelMessage[]): number {
+  let bytes = 0;
+  for (const msg of messages) bytes += JSON.stringify(msg).length;
+  return Math.ceil(bytes / 4);
 }
 
 /**
