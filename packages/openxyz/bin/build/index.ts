@@ -6,6 +6,7 @@ import { generateEntrypoint } from "./entrypoint";
 import { FAVICON_SVG, generateFaviconIco } from "./favicon";
 import { virtualRuntimePlugin } from "./plugins/virtual-runtime";
 import { inMemoryWorkspacePlugin } from "./plugins/in-memory-workspace";
+import { modelsApiPrefetchPlugin, prefetchForBuild } from "./plugins/models-api-prefetch";
 
 export async function buildVercel(cwd: string): Promise<void> {
   const files = await scanDir(cwd);
@@ -29,6 +30,14 @@ export async function buildVercel(cwd: string): Promise<void> {
   const funcDir = resolve(outputDir, "functions/index.func");
   mkdirSync(funcDir, { recursive: true });
 
+  // Fetch once before the bundle — mode 1 if OPENXYZ_MODEL is set (single
+  // entry, tiny payload), mode 2 otherwise (every tool-calling model in our
+  // supported providers). Fail-open: unreachable models.dev returns `{}`
+  // and runtime cache picks up the slack.
+  console.log("▶ Prefetching models.dev");
+  const prefetchedLimits = await prefetchForBuild(process.env.OPENXYZ_MODEL);
+  console.log(`  ${Object.keys(prefetchedLimits).length} models settings baked into the bundle`);
+
   const result = await Bun.build({
     entrypoints: [entrypoint],
     outdir: funcDir,
@@ -40,7 +49,11 @@ export async function buildVercel(cwd: string): Promise<void> {
       "process.env.NODE_ENV": JSON.stringify("production"),
       "process.env.OPENXYZ_BACKEND": JSON.stringify("vercel"),
     },
-    plugins: [inMemoryWorkspacePlugin(cwd, files.files), virtualRuntimePlugin()],
+    plugins: [
+      inMemoryWorkspacePlugin(cwd, files.files),
+      virtualRuntimePlugin(),
+      modelsApiPrefetchPlugin(prefetchedLimits),
+    ],
   });
 
   if (!result.success) {

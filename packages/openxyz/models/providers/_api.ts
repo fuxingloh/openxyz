@@ -24,6 +24,20 @@ export type ModelLimit = {
 type Registry = Record<string, ModelLimit>;
 
 /**
+ * Providers openxyz ships. Shared with the build-time prefetch plugin so
+ * both the baked map and the runtime live-fetch fall-back filter against
+ * the same list. Template-provided models using other ai-sdk providers
+ * (anthropic-direct, openai-direct, …) fall through to the runtime
+ * 200K default — see mnemonic/088.
+ *
+ * **When changing OPENXYZ_MODEL or when models.dev adds a new model,
+ * rebuild** — the plugin bakes at build time; new entries only appear in
+ * the bundle on a fresh build. Runtime live fetch covers them too but
+ * costs one HTTP round-trip per fresh process.
+ */
+export const SUPPORTED_PROVIDERS = ["amazon-bedrock", "openrouter", "vercel", "opencode"] as const;
+
+/**
  * Cleared automatically after `CACHE_TTL_MS`. Short enough that idle
  * processes don't hold ~200 KB of parsed limits forever; long enough that
  * a burst of lookups during startup shares one fetch.
@@ -78,9 +92,14 @@ async function liveFetch(): Promise<Registry> {
     const res = await fetch("https://models.dev/api.json", { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
     const data = (await res.json()) as Record<string, { models?: Record<string, { limit?: { context?: number } }> }>;
+    // Filter to the providers we ship — matches the build-time prefetch
+    // scope. Template-provided models using other ai-sdk providers fall
+    // through to the runtime 200K default (mnemonic/088).
     const out: Registry = {};
-    for (const [providerId, provider] of Object.entries(data)) {
-      for (const [modelId, model] of Object.entries(provider.models ?? {})) {
+    for (const providerId of SUPPORTED_PROVIDERS) {
+      const provider = data[providerId];
+      if (!provider?.models) continue;
+      for (const [modelId, model] of Object.entries(provider.models)) {
         if (typeof model.limit?.context === "number") {
           out[`${providerId}/${modelId}`] = { context: model.limit.context };
         }
