@@ -94,7 +94,7 @@ export class AgentFactory {
       const available = Object.keys(this.#runtime.models).join(", ") || "<none>";
       throw new Error(`[openxyz] agent "${name}" references model "${modelName}" — not found. Available: ${available}`);
     }
-    const { model, systemPrompt } = entry;
+    const { raw: model, systemPrompt } = entry;
 
     const tools = this.#loadTools(def);
     if (opts?.delegate !== false) {

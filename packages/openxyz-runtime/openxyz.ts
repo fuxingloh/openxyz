@@ -1,21 +1,11 @@
 import { Chat } from "chat";
 import type { Message as ChatSdkMessage, StateAdapter } from "chat";
-import type { LanguageModel, ModelMessage, Tool } from "ai";
-import type { Channel, Thread } from "./channels";
+import type { ModelMessage, Tool } from "ai";
+import { estimateTokens, type Channel, type Session, type Thread } from "./channels";
 import type { Drive } from "./drive";
 import { AgentFactory, type AgentDef } from "./agents/factory";
+import type { Model } from "./model";
 import type { SkillDef } from "./tools/skill";
-
-/**
- * Named language model + the system prompt that ships with it. The prompt
- * is per-model so providers can tune wording for model-family quirks (what
- * works for Claude is not what works for GLM). Default prompt lives in
- * `packages/openxyz/models/prompts/system.md`; providers can override.
- */
-export type Model = {
-  model: LanguageModel;
-  systemPrompt: string;
-};
 
 /**
  * Materialized template shape passed into the runtime. Scanning lives in the
