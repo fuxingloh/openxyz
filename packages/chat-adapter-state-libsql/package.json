@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@chat-adapter/state-libsql",
+  "version": "0.0.0",
+  "description": "libSQL / Turso state adapter for chat (local file or remote) — vendored from vercel/chat#packages/state-libsql until upstream npm release",
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@libsql/client": ">=0.15.0",
+    "chat": "catalog:"
+  },
+  "devDependencies": {
+    "@libsql/client": "^0.15.15",
+    "@types/bun": "latest",
+    "@types/node": "latest",
+    "libsql": "^0.5.29"
+  },
+  "peerDependencies": {
+    "libsql": ">=0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "libsql": {
+      "optional": true
+    }
+  }
+}

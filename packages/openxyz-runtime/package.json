@@ -8,6 +8,7 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "4.0.93",
     "@ai-sdk/openai-compatible": "2.0.41",
+    "@chat-adapter/state-libsql": "workspace:*",
     "@chat-adapter/state-pg": "catalog:",
     "@chat-adapter/state-redis": "catalog:",
     "@electric-sql/pglite": "^0.4",
