@@ -6,7 +6,9 @@
     "start": "openxyz start"
   },
   "dependencies": {
+    "@ai-sdk/xai": "3.0.83",
     "@openxyz/github": "workspace:*",
+    "ai": "catalog:",
     "openxyz": "workspace:*"
   },
   "devDependencies": {
