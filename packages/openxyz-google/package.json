@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@openxyz/google",
+  "version": "0.0.0",
+  "license": "BUSL-1.1",
+  "author": "fuxingloh",
+  "type": "module",
+  "exports": {
+    "./drive": "./drive.ts"
+  },
+  "files": [
+    "drive.ts"
+  ],
+  "dependencies": {
+    "@openxyz/runtime": "workspace:*",
+    "just-bash": "^2",
+    "just-bash-gdrive": "^0.1.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
