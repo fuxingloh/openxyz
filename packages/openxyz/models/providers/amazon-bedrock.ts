@@ -7,7 +7,12 @@ import { lookupLimit } from "./_api";
  * Amazon Bedrock model factory. Credentials resolve from the AWS SDK's
  * default credential chain (env, shared config, instance role). Wrapped
  * with `cacheMiddleware("bedrock")` to stamp `cachePoint` markers on the
- * instructions frame for prompt caching.
+ * instructions frame for prompt caching — see `_cache.ts` for the full
+ * design notes (TTL, breakpoint placement, prior-art comparison, v2 plan).
+ *
+ * The marker is wire-protocol-scoped: `cachePoint` is Bedrock's universal
+ * cache primitive, applied regardless of which model family sits behind
+ * Bedrock (Claude, Nova, Llama, ...). No per-model dispatch needed.
  *
  * `limit` is looked up from `models.dev` for the given modelId. Fail-open:
  * if models.dev is unreachable or the model is unlisted, the field is left

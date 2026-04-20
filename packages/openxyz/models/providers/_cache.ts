@@ -1,47 +1,41 @@
 import type { LanguageModelMiddleware } from "ai";
 
 /**
- * Providers whose SDK packages actually read the marker we stamp. Only
- * providers wired through their native `@ai-sdk/<name>` package belong
- * here — openai-compatible backends (OpenRouter, Vercel AI Gateway,
- * opencode-zen) route through `@ai-sdk/openai-compatible`, which only
- * forwards `providerOptions.openaiCompatible` to the wire and drops
- * everything else. See `../../../../ai/packages/openai-compatible/src/chat/
+ * Providers whose SDK packages actually read the marker we stamp.
+ *
+ * Marker shape is **wire-protocol-scoped, not model-family-scoped** — Bedrock's
+ * `cachePoint` works for any Bedrock-hosted model regardless of underlying
+ * family (Claude, Nova, Llama, ...), so dispatch is per provider package, not
+ * per model.
+ *
+ * `@ai-sdk/openai-compatible` backends (OpenRouter, Vercel Gateway,
+ * opencode-zen) don't belong here — they silently drop unknown
+ * `providerOptions`. See `../../../../ai/packages/openai-compatible/src/chat/
  * convert-to-openai-compatible-chat-messages.ts:16`.
  */
 export type CacheProvider = "anthropic" | "bedrock";
 
+const TAIL_BREAKPOINTS = 2;
+
 /**
- * Cache-control middleware. Stamps the last system message in `params.prompt`
- * with an ephemeral cache breakpoint so supported providers stop repaying
- * the static instructions prefix on every turn.
+ * Stamp cache breakpoints on `params.prompt`:
  *
- * ## Current coverage (v1)
+ * 1. **Last consecutive system at head** — the instructions frame
+ *    (basePrompt + AGENTS.md + skills + agent body, built in
+ *    `AgentFactory.#buildInstructions`). Largest stable prefix.
+ * 2. **Last 2 non-system messages** — sliding tail. On turn N+1 the prefix
+ *    through turn N is identical → cache hit on the entire history,
+ *    including tool results. Re-stamping is free; only the new tail
+ *    position pays a write.
  *
- * Only `cacheMiddleware("bedrock")` is wired (see `bedrock.ts`). Anthropic
- * is declared but unused — slot reserved for when `@ai-sdk/anthropic` lands
- * as a direct provider.
+ * Total ≤ 3 breakpoints, well under Anthropic's 4 cap. Mirrors opencode's
+ * `slice(-2)` shape (`mnemonic/093`).
  *
- * Only the instructions block (last consecutive system at the head of the
- * prompt) is marked. That's the biggest single win — 3–6K tokens, identical
- * across every turn within a process lifetime.
+ * Default 5m TTL on both providers (Bedrock's `cachePoint` with no `ttl`,
+ * Anthropic's `ephemeral`). Cache hits slide the TTL forward.
  *
- * ## Not covered yet (follow-up work)
- *
- * - **Prompt-tail breakpoint on the last user message** — extends the cached
- *   prefix through env + conversation history. Compounds across turns.
- * - **Env frame caching** — channel-provided `Telegram DM: ...` frame,
- *   stable within a thread. Small absolute win.
- * - **MEMORY.md / USER.md positioning** — when they land, they belong
- *   inside the cached prefix.
- * - **openai-compatible backends** (OpenRouter, Vercel gateway, opencode-zen)
- *   — need `providerOptions.openaiCompatible.cache_control` instead, and
- *   we need to verify the upstream service honors it. Punt until proven.
- * - **Token accounting** — `usage.cacheReadInputTokens` / equivalents
- *   surfaced in logs (`mnemonic/032`).
- * - **Session affinity** — `x-session-affinity` header where supported.
- * - **Cache budget** — Anthropic caps at 4 breakpoints per request;
- *   we currently use 1.
+ * Roadmap (env frame, token accounting, OpenAI `prompt_cache_key`, hard
+ * 4-breakpoint counter cap) lives in `mnemonic/073` + `mnemonic/093`.
  */
 export function cacheMiddleware(provider: CacheProvider): LanguageModelMiddleware {
   return {
@@ -50,19 +44,28 @@ export function cacheMiddleware(provider: CacheProvider): LanguageModelMiddlewar
       const prompt = params.prompt;
       if (!Array.isArray(prompt) || prompt.length === 0) return params;
 
-      // System messages always sit at the head of the prompt in our pipeline
-      // (instructions first, then per-request env, then user/assistant).
-      // Stamp the last consecutive system at the front — that's the
-      // instructions frame emitted by ToolLoopAgent.
-      let lastSystem = -1;
-      for (let i = 0; i < prompt.length; i++) {
-        if (prompt[i]!.role === "system") lastSystem = i;
-        else break;
-      }
-      if (lastSystem === -1) return params;
+      const targets = new Set<number>();
 
-      const stamped = [...prompt];
-      stamped[lastSystem] = withMarker(stamped[lastSystem]!, provider);
+      // Instructions frame: last consecutive system at the head.
+      for (let i = 0; i < prompt.length; i++) {
+        if (prompt[i]!.role !== "system") break;
+        targets.clear();
+        targets.add(i);
+      }
+
+      // Sliding tail: last N non-system messages. Captures the growing
+      // conversation prefix so subsequent turns hit cache for everything
+      // before the new tail position.
+      let tailFound = 0;
+      for (let i = prompt.length - 1; i >= 0 && tailFound < TAIL_BREAKPOINTS; i--) {
+        if (prompt[i]!.role === "system") continue;
+        targets.add(i);
+        tailFound++;
+      }
+
+      if (targets.size === 0) return params;
+
+      const stamped = prompt.map((msg, i) => (targets.has(i) ? withMarker(msg, provider) : msg));
       return { ...params, prompt: stamped };
     },
   };
@@ -70,15 +73,22 @@ export function cacheMiddleware(provider: CacheProvider): LanguageModelMiddlewar
 
 type WithProviderOptions = { providerOptions?: Record<string, Record<string, unknown>> };
 
+/**
+ * Per-provider marker dialect:
+ * - bedrock    → `providerOptions.bedrock.cachePoint = { type: "default" }`
+ * - anthropic  → `providerOptions.anthropic.cacheControl = { type: "ephemeral" }`
+ *
+ * Merged into existing `providerOptions[provider]` so it composes with other
+ * per-provider hints (reasoning, beta flags) the model wrapper may have set.
+ */
 function withMarker<M extends WithProviderOptions>(msg: M, provider: CacheProvider): M {
-  const key = provider;
   const marker = provider === "bedrock" ? { cachePoint: { type: "default" } } : { cacheControl: { type: "ephemeral" } };
 
   return {
     ...msg,
     providerOptions: {
       ...(msg.providerOptions ?? {}),
-      [key]: { ...(msg.providerOptions?.[key] ?? {}), ...marker },
+      [provider]: { ...(msg.providerOptions?.[provider] ?? {}), ...marker },
     },
   };
 }
