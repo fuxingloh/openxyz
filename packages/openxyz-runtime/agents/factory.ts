@@ -97,9 +97,10 @@ export class AgentFactory {
     const { raw: model, systemPrompt } = entry;
 
     const tools = this.#loadTools(def);
-    if (opts?.delegate !== false) {
-      tools.delegate = this.#createDelegateTool();
-    }
+    // Runtime hard-off: sub-agents spawned via delegate can never re-delegate,
+    // regardless of what their frontmatter allows. Frontmatter controls the
+    // opt-in for top-level agents (`delegate` is in the filterable tool set).
+    if (opts?.delegate === false) delete tools.delegate;
 
     const skills = this.#filterSkills(def);
     const instructions = this.#buildInstructions(def, systemPrompt, tools, skills);
@@ -169,6 +170,7 @@ export class AgentFactory {
       web_fetch,
       web_search,
       skill: createSkillTool(this.#filterSkills(def)),
+      delegate: this.#createDelegateTool(),
       ...this.#runtime.tools,
     };
 
