@@ -4,8 +4,8 @@ import { readEnv } from "openxyz/env";
 export default mcp({
   url: "https://mcp.agentmail.to/mcp",
   headers: {
-    Authorization: `Bearer ${readEnv("AGENT_MAIL_API_KEY", {
+    "X-API-Key": readEnv("AGENT_MAIL_API_KEY", {
       description: "AgentMail API key — https://console.agentmail.to",
-    })}`,
+    }),
   },
 });
