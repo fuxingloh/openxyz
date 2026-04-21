@@ -54,14 +54,13 @@ Default to AI Gateway model strings (`provider/model`) over direct provider SDK 
 - **`packages/openxyz-runtime`** (`@openxyz/runtime`): the **engine**. Agent loop (`openxyz.ts`), tool registry/discovery, VFS (`just-bash` + `MountableFs`), `Drive` interface + `WorkspaceDrive`, reusable FS adapters (`fs/ignored.ts`, `fs/readonly.ts`), `Channel` abstract class, session store, streaming. Scoped package, internal to the openxyz family. Bare engine — ships no default agents, no default models, no default drives beyond `WorkspaceDrive`. Templates do **not** import from here directly — they import from `openxyz`, which re-exports whatever runtime surface the template needs.
 - **Vendor packages** (`@openxyz/<vendor>` ↔ `packages/openxyz-<vendor>/`): one package per external integration (Telegram, GitHub, Slack, Notion, ...). Subpath exports by kind: `@openxyz/telegram/channel`, `@openxyz/github/drive`, etc. A vendor can ship any mix of `/channel`, `/drive`, `/tools`, `/model` as its surface. Popular vendors (Telegram currently) get re-exported via `openxyz/channels/<vendor>` + `openxyz/drives/<vendor>` so templates don't need an extra install; less-popular ones users add explicitly. Naming convention and rationale in `mnemonic/075`.
 - **Templates** (`templates/<name>/`): reference projects. `openxyz-janitor` is the dogfood chief-of-staff. `pkbm-agent` and `group-agent` exercise other shapes. Each template depends on `openxyz: workspace:*`.
-- **Turborepo** (`turbo.json`): `build`, `test`, `lint`, `clean`, `dev` tasks. `packages/openxyz` has no build script (runs source). Templates use `build: openxyz build` which codegens a Vercel function bundle into `.vercel/output/`. Filter via `bun run build --filter='./templates/*'` or `--filter=<template-name>`.
+- **Turborepo** (`turbo.json`): `build`, `test`, `clean`, `dev` tasks. `packages/openxyz` has no build script (runs source). Templates use `build: openxyz build` which codegens a Vercel function bundle into `.vercel/output/`. Filter via `bun run build --filter='./templates/*'` or `--filter=<template-name>`.
 
 ## Commands
 
 ```bash
 bun install                                # Install dependencies
 bun run test                               # Run all tests (turbo)
-bun run lint                               # Lint all packages with --fix (turbo)
 bun run format                             # Format all files with Prettier
 bun x prettier --check .                   # Check formatting without writing
 
