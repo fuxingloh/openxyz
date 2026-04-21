@@ -18,7 +18,7 @@
     "chat": "catalog:"
   },
   "devDependencies": {
-    "@libsql/client": "^0.15.15",
+    "@libsql/client": "^0.17.2",
     "@types/bun": "latest",
     "@types/node": "latest",
     "libsql": "^0.5.29"
