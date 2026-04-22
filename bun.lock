@@ -39,7 +39,7 @@
       "version": "0.0.0",
       "bin": "bin/bin.ts",
       "dependencies": {
-        "@ai-sdk/amazon-bedrock": "4.0.93",
+        "@ai-sdk/amazon-bedrock": "4.0.96",
         "@ai-sdk/mcp": "^1.0.36",
         "@ai-sdk/openai-compatible": "2.0.41",
         "@openxyz/runtime": "workspace:*",
@@ -89,8 +89,6 @@
       "name": "@openxyz/runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@ai-sdk/amazon-bedrock": "4.0.93",
-        "@ai-sdk/openai-compatible": "2.0.41",
         "@chat-adapter/state-libsql": "workspace:*",
         "@chat-adapter/state-redis": "catalog:",
         "chat": "catalog:",
@@ -166,9 +164,9 @@
     "chat": "4.26.0",
   },
   "packages": {
-    "@ai-sdk/amazon-bedrock": ["@ai-sdk/amazon-bedrock@4.0.93", "", { "dependencies": { "@ai-sdk/anthropic": "3.0.69", "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23", "@smithy/eventstream-codec": "^4.0.1", "@smithy/util-utf8": "^4.0.0", "aws4fetch": "^1.0.20" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-hcXDU8QDwpAzLVTuY932TQVlIij9+iaVTxc5mPGY6yb//JMAAC5hMVhg93IrxlrxWLvMgjezNgoZGwquR+SGnw=="],
+    "@ai-sdk/amazon-bedrock": ["@ai-sdk/amazon-bedrock@4.0.96", "", { "dependencies": { "@ai-sdk/anthropic": "3.0.71", "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23", "@smithy/eventstream-codec": "^4.0.1", "@smithy/util-utf8": "^4.0.0", "aws4fetch": "^1.0.20" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-Mc4Ias2jRMD1jOB6xWtKNPdhECeuCZyIlbr9EAGfBnyBt++sS13ziZh9qv9TdyMCAZJ7xoQcpbchoRJcKwPdpA=="],
 
-    "@ai-sdk/anthropic": ["@ai-sdk/anthropic@3.0.69", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-LshR7X3pFugY0o41G2VKTmg1XoGpSl7uoYWfzk6zjVZLhCfeFiwgpOga+eTV4XY1VVpZwKVqRnkDbIL7K2eH5g=="],
+    "@ai-sdk/anthropic": ["@ai-sdk/anthropic@3.0.71", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-bUWOzrzR0gJKJO/PLGMR4uH2dqEgqGhrsCV+sSpk4KtOEnUQlfjZI/F7BFlqSvVpFbjdgYRRLysAeEZpJ6S1lg=="],
 
     "@ai-sdk/gateway": ["@ai-sdk/gateway@3.0.98", "", { "dependencies": { "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.23", "@vercel/oidc": "3.1.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-Ol+nP8PIlj8FjN8qKlxhE89N0woqAaGi9CUBGp1boe3RafpphJ7WMuq/RErSvxtwTqje03TP+zIdzP113krxRg=="],
 
