@@ -155,7 +155,13 @@ export async function generateEntrypoint(
   const mdEntries = Object.entries(mdIds).map(([slot, id]) => `    ${JSON.stringify(slot)}: ${id},`);
   if (mdEntries.length > 0) body.push(`  mds: {\n${mdEntries.join("\n")}\n  },`);
   body.push(`});`);
-  body.push(`await openxyz.init({ state: await createChatState(openxyz.cwd) });`);
+  // Serverless entrypoint: the function can be suspended between invocations,
+  // so we don't wire a shutdown hook here — the Turso client's `close()`
+  // only matters when the Lambda is being torn down. If that ever matters,
+  // capture `close` from the destructured return and register it on
+  // `process.on("beforeExit", …)`.
+  body.push(`const { state } = await createChatState(openxyz.cwd);`);
+  body.push(`await openxyz.init({ state });`);
   body.push(``);
   // `waitUntil` is the load-bearing bit on Vercel. chat-sdk dispatches
   // messages as fire-and-forget background tasks (chat.ts `processMessage`);

@@ -32,7 +32,7 @@ async function action(): Promise<void> {
 
   const runtime = await loadRuntime(files);
   const openxyz = new OpenXyz(runtime);
-  const state = await createChatState(runtime.cwd);
+  const { state, close } = await createChatState(runtime.cwd);
   await openxyz.init({ state });
   console.log("openxyz running. Ctrl-C to quit.");
 
@@ -42,6 +42,7 @@ async function action(): Promise<void> {
   });
 
   await openxyz.stop();
+  await close();
   process.exit(0);
 }
 

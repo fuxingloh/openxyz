@@ -10,7 +10,6 @@
     ],
     "catalog": {
       "@ai-sdk/provider": "3.0.8",
-      "@chat-adapter/state-redis": "4.26.0",
       "@chat-adapter/telegram": "4.26.0",
       "ai": "6.0.161",
       "chat": "4.26.0"

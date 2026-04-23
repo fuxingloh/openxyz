@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@chat-adapter/state-turso",
+  "version": "0.0.0",
+  "description": "Turso state adapter for chat — structural Client interface, caller brings the driver (@tursodatabase/serverless or @tursodatabase/database)",
+  "license": "MIT",
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "chat": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "latest"
+  },
+  "peerDependencies": {
+    "@tursodatabase/database": ">=0.5",
+    "@tursodatabase/serverless": ">=1.1"
+  },
+  "peerDependenciesMeta": {
+    "@tursodatabase/database": {
+      "optional": true
+    },
+    "@tursodatabase/serverless": {
+      "optional": true
+    }
+  }
+}

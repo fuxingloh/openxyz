@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Lock, Logger } from "chat";
-import Database from "libsql/promise";
+import { connect, type Database } from "@tursodatabase/database";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { createLibSqlState, LibSqlStateAdapter } from "./index";
+import { TursoStateAdapter } from "./index";
 
 const mockLogger: Logger = {
   child: mock(() => mockLogger),
@@ -14,36 +14,22 @@ const mockLogger: Logger = {
   error: mock(),
 };
 
-function withEnv<T>(key: string, value: string, fn: () => T): T {
-  const prev = process.env[key];
-  process.env[key] = value;
-  try {
-    return fn();
-  } finally {
-    if (prev === undefined) delete process.env[key];
-    else process.env[key] = prev;
-  }
-}
-
-const LIBSQL_TOKEN_RE = /^libsql_/;
+const TURSO_TOKEN_RE = /^turso_/;
 
 function tmpFilePath(): { path: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "chat-libsql-"));
+  const dir = mkdtempSync(join(tmpdir(), "chat-turso-"));
   const file = join(dir, "state.db");
-  return {
-    path: file,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
-  };
+  return { path: file, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeTmpDb(): { db: Database; cleanup: () => void } {
+async function makeTmpDb(): Promise<{ db: Database; cleanup: () => Promise<void> }> {
   const { path, cleanup } = tmpFilePath();
-  const db = new Database(path, {});
+  const db = await connect(path);
   return {
     db,
-    cleanup: () => {
+    cleanup: async () => {
       try {
-        db.close();
+        await db.close();
       } catch {
         // already closed
       }
@@ -52,212 +38,77 @@ function makeTmpDb(): { db: Database; cleanup: () => void } {
   };
 }
 
-describe("LibSqlStateAdapter (libsql/promise)", () => {
-  it("exports createLibSqlState", () => {
-    expect(typeof createLibSqlState).toBe("function");
-  });
-
-  it("exports LibSqlStateAdapter", () => {
-    expect(typeof LibSqlStateAdapter).toBe("function");
-  });
-
-  describe("createLibSqlState", () => {
-    it("creates an adapter from a file path", () => {
-      const { path, cleanup } = tmpFilePath();
-      try {
-        const adapter = createLibSqlState({ url: path, logger: mockLogger });
-        expect(adapter).toBeInstanceOf(LibSqlStateAdapter);
-      } finally {
-        cleanup();
-      }
-    });
-
-    it("accepts an existing Database", () => {
-      const { db, cleanup } = makeTmpDb();
-      try {
-        const adapter = createLibSqlState({ client: db, logger: mockLogger });
-        expect(adapter).toBeInstanceOf(LibSqlStateAdapter);
-      } finally {
-        cleanup();
-      }
-    });
-
-    it("throws when no url or TURSO_DATABASE_URL is available", () => {
-      withEnv("TURSO_DATABASE_URL", "", () => {
-        expect(() => createLibSqlState({ logger: mockLogger })).toThrow("libSQL url is required");
-      });
-    });
-
-    it("uses TURSO_DATABASE_URL env var as fallback", () => {
-      const { path, cleanup } = tmpFilePath();
-      try {
-        withEnv("TURSO_DATABASE_URL", path, () => {
-          const adapter = createLibSqlState({ logger: mockLogger });
-          expect(adapter).toBeInstanceOf(LibSqlStateAdapter);
-        });
-      } finally {
-        cleanup();
-      }
-    });
-
-    describe("URL types", () => {
-      it("connects to a local file path", async () => {
-        const { path, cleanup } = tmpFilePath();
-        try {
-          const adapter = createLibSqlState({
-            url: path,
-            logger: mockLogger,
-          });
-          await adapter.connect();
-          await adapter.subscribe("slack:C1:1.2");
-          expect(await adapter.isSubscribed("slack:C1:1.2")).toBe(true);
-          await adapter.disconnect();
-        } finally {
-          cleanup();
-        }
-      });
-
-      it("connects to a file: URL", async () => {
-        const { path, cleanup } = tmpFilePath();
-        try {
-          const adapter = createLibSqlState({
-            url: `file:${path}`,
-            logger: mockLogger,
-          });
-          await adapter.connect();
-          await adapter.subscribe("slack:C1:1.2");
-          expect(await adapter.isSubscribed("slack:C1:1.2")).toBe(true);
-          await adapter.disconnect();
-        } finally {
-          cleanup();
-        }
-      });
-
-      it("connects to an in-memory database", async () => {
-        const adapter = createLibSqlState({
-          url: ":memory:",
-          logger: mockLogger,
-        });
-        await adapter.connect();
-        await adapter.subscribe("slack:C1:1.2");
-        expect(await adapter.isSubscribed("slack:C1:1.2")).toBe(true);
-        await adapter.disconnect();
-      });
-
-      // Remote URLs the native binding supports at construction time.
-      // It lazily dials the network on the first query, so construction
-      // succeeds without a live server. `ws://`/`wss://` are only supported
-      // by `@chat-adapter/state-libsql/client` (`@libsql/client`), not by
-      // the native binding.
-      it.each([["libsql://db.turso.io"], ["https://db.turso.io"], ["http://127.0.0.1:8080"]])(
-        "accepts remote URL %s",
-        (url) => {
-          const adapter = createLibSqlState({
-            url,
-            authToken: "tok",
-            logger: mockLogger,
-          });
-          expect(adapter).toBeInstanceOf(LibSqlStateAdapter);
-        },
-      );
-    });
+describe("TursoStateAdapter", () => {
+  it("exports TursoStateAdapter", () => {
+    expect(typeof TursoStateAdapter).toBe("function");
   });
 
   describe("ensureConnected", () => {
     let db: Database;
-    let cleanup: () => void;
+    let cleanup: () => Promise<void>;
 
-    beforeEach(() => {
-      ({ db, cleanup } = makeTmpDb());
+    beforeEach(async () => {
+      ({ db, cleanup } = await makeTmpDb());
     });
 
-    afterEach(() => {
-      cleanup();
+    afterEach(async () => {
+      await cleanup();
     });
 
     it.each([
-      ["subscribe", (a: LibSqlStateAdapter) => a.subscribe("t1")],
-      ["unsubscribe", (a: LibSqlStateAdapter) => a.unsubscribe("t1")],
-      ["isSubscribed", (a: LibSqlStateAdapter) => a.isSubscribed("t1")],
-      ["acquireLock", (a: LibSqlStateAdapter) => a.acquireLock("t1", 5000)],
-      ["get", (a: LibSqlStateAdapter) => a.get("key")],
-      ["set", (a: LibSqlStateAdapter) => a.set("key", "value")],
-      ["setIfNotExists", (a: LibSqlStateAdapter) => a.setIfNotExists("key", "value")],
-      ["delete", (a: LibSqlStateAdapter) => a.delete("key")],
-      ["appendToList", (a: LibSqlStateAdapter) => a.appendToList("list", "value")],
-      ["getList", (a: LibSqlStateAdapter) => a.getList("list")],
+      ["subscribe", (a: TursoStateAdapter) => a.subscribe("t1")],
+      ["unsubscribe", (a: TursoStateAdapter) => a.unsubscribe("t1")],
+      ["isSubscribed", (a: TursoStateAdapter) => a.isSubscribed("t1")],
+      ["acquireLock", (a: TursoStateAdapter) => a.acquireLock("t1", 5000)],
+      ["get", (a: TursoStateAdapter) => a.get("key")],
+      ["set", (a: TursoStateAdapter) => a.set("key", "value")],
+      ["setIfNotExists", (a: TursoStateAdapter) => a.setIfNotExists("key", "value")],
+      ["delete", (a: TursoStateAdapter) => a.delete("key")],
+      ["appendToList", (a: TursoStateAdapter) => a.appendToList("list", "value")],
+      ["getList", (a: TursoStateAdapter) => a.getList("list")],
       [
         "enqueue",
-        (a: LibSqlStateAdapter) =>
-          a.enqueue(
-            "t1",
-            {
-              message: { id: "m1" },
-              enqueuedAt: 0,
-              expiresAt: 1,
-            } as never,
-            10,
-          ),
+        (a: TursoStateAdapter) => a.enqueue("t1", { message: { id: "m1" }, enqueuedAt: 0, expiresAt: 1 } as never, 10),
       ],
-      ["dequeue", (a: LibSqlStateAdapter) => a.dequeue("t1")],
-      ["queueDepth", (a: LibSqlStateAdapter) => a.queueDepth("t1")],
+      ["dequeue", (a: TursoStateAdapter) => a.dequeue("t1")],
+      ["queueDepth", (a: TursoStateAdapter) => a.queueDepth("t1")],
     ])("throws when calling %s before connect", async (_, fn) => {
-      const adapter = new LibSqlStateAdapter({
-        client: db,
-        logger: mockLogger,
-      });
-      await expect(fn(adapter)).rejects.toThrow("not connected");
+      const adapter = new TursoStateAdapter({ client: db, logger: mockLogger });
+      expect(fn(adapter)).rejects.toThrow("not connected");
     });
 
     it("throws for releaseLock before connect", async () => {
-      const adapter = new LibSqlStateAdapter({
-        client: db,
-        logger: mockLogger,
-      });
-      const lock: Lock = {
-        threadId: "t1",
-        token: "tok",
-        expiresAt: Date.now(),
-      };
-      await expect(adapter.releaseLock(lock)).rejects.toThrow("not connected");
+      const adapter = new TursoStateAdapter({ client: db, logger: mockLogger });
+      const lock: Lock = { threadId: "t1", token: "tok", expiresAt: Date.now() };
+      expect(adapter.releaseLock(lock)).rejects.toThrow("not connected");
     });
 
     it("throws for extendLock before connect", async () => {
-      const adapter = new LibSqlStateAdapter({
-        client: db,
-        logger: mockLogger,
-      });
-      const lock: Lock = {
-        threadId: "t1",
-        token: "tok",
-        expiresAt: Date.now(),
-      };
-      await expect(adapter.extendLock(lock, 5000)).rejects.toThrow("not connected");
+      const adapter = new TursoStateAdapter({ client: db, logger: mockLogger });
+      const lock: Lock = { threadId: "t1", token: "tok", expiresAt: Date.now() };
+      expect(adapter.extendLock(lock, 5000)).rejects.toThrow("not connected");
     });
 
     it("throws for forceReleaseLock before connect", async () => {
-      const adapter = new LibSqlStateAdapter({
-        client: db,
-        logger: mockLogger,
-      });
-      await expect(adapter.forceReleaseLock("t1")).rejects.toThrow("not connected");
+      const adapter = new TursoStateAdapter({ client: db, logger: mockLogger });
+      expect(adapter.forceReleaseLock("t1")).rejects.toThrow("not connected");
     });
   });
 
-  describe("with a real libsql file database", () => {
+  describe("with a real turso file database", () => {
     let db: Database;
-    let cleanupDb: () => void;
-    let adapter: LibSqlStateAdapter;
+    let cleanupDb: () => Promise<void>;
+    let adapter: TursoStateAdapter;
 
     beforeEach(async () => {
-      ({ db, cleanup: cleanupDb } = makeTmpDb());
-      adapter = new LibSqlStateAdapter({ client: db, logger: mockLogger });
+      ({ db, cleanup: cleanupDb } = await makeTmpDb());
+      adapter = new TursoStateAdapter({ client: db, logger: mockLogger });
       await adapter.connect();
     });
 
     afterEach(async () => {
       await adapter.disconnect();
-      cleanupDb();
+      await cleanupDb();
     });
 
     describe("connect / disconnect", () => {
@@ -267,13 +118,13 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
       });
 
       it("deduplicates concurrent connect calls", async () => {
-        const { db: d, cleanup } = makeTmpDb();
+        const { db: d, cleanup } = await makeTmpDb();
         try {
-          const a = new LibSqlStateAdapter({ client: d, logger: mockLogger });
+          const a = new TursoStateAdapter({ client: d, logger: mockLogger });
           await Promise.all([a.connect(), a.connect()]);
           await a.disconnect();
         } finally {
-          cleanup();
+          await cleanup();
         }
       });
 
@@ -283,43 +134,26 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
         await adapter.connect();
       });
 
-      it("does not close external client on disconnect", async () => {
+      it("never closes the passed-in client on disconnect", async () => {
         await adapter.disconnect();
-        // The Database is still usable — proving the adapter did not close
-        // a client it didn't own.
-        const stmt = await db.prepare("SELECT 1 AS v");
-        expect(stmt.get().v).toBe(1);
+        // DI contract: caller owns client lifecycle. The Database must still
+        // be usable — the adapter never touches it.
+        const stmt = db.prepare("SELECT 1 AS v");
+        const row = await stmt.get();
+        expect(row.v).toBe(1);
         await adapter.connect();
       });
 
-      it("closes owned client on disconnect", async () => {
-        const { path, cleanup } = tmpFilePath();
-        try {
-          const a = createLibSqlState({ url: path, logger: mockLogger });
-          await a.connect();
-          const innerDb = a.getClient();
-          await a.disconnect();
-          // libsql/promise doesn't flip `open` on close(), so assert via
-          // behaviour: the closed Database should reject further use.
-          await expect(innerDb.prepare("SELECT 1")).rejects.toThrow();
-        } finally {
-          cleanup();
-        }
-      });
-
       it("handles connect failure and allows retry", async () => {
-        const { db: broken, cleanup } = makeTmpDb();
+        const { db: broken, cleanup } = await makeTmpDb();
         try {
-          broken.close();
-          const a = new LibSqlStateAdapter({
-            client: broken,
-            logger: mockLogger,
-          });
-          await expect(a.connect()).rejects.toThrow();
+          await broken.close();
+          const a = new TursoStateAdapter({ client: broken, logger: mockLogger });
+          expect(a.connect()).rejects.toThrow();
           expect(mockLogger.error).toHaveBeenCalled();
-          await expect(a.connect()).rejects.toThrow();
+          expect(a.connect()).rejects.toThrow();
         } finally {
-          cleanup();
+          await cleanup();
         }
       });
     });
@@ -336,11 +170,7 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
       });
 
       it("isolates subscriptions by keyPrefix", async () => {
-        const other = new LibSqlStateAdapter({
-          client: db,
-          keyPrefix: "other",
-          logger: mockLogger,
-        });
+        const other = new TursoStateAdapter({ client: db, keyPrefix: "other", logger: mockLogger });
         await other.connect();
         await adapter.subscribe("t1");
         expect(await other.isSubscribed("t1")).toBe(false);
@@ -353,7 +183,7 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
         const lock = await adapter.acquireLock("t1", 5000);
         expect(lock).not.toBeNull();
         expect(lock?.threadId).toBe("t1");
-        expect(lock?.token).toMatch(LIBSQL_TOKEN_RE);
+        expect(lock?.token).toMatch(TURSO_TOKEN_RE);
         expect(lock?.expiresAt).toBeGreaterThan(Date.now());
       });
 
@@ -382,20 +212,15 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
           expiresAt: lock?.expiresAt ?? 0,
         });
         expect(await adapter.acquireLock("t1", 5000)).toBeNull();
-        if (lock) {
-          await adapter.releaseLock(lock);
-        }
+        if (lock) await adapter.releaseLock(lock);
         expect(await adapter.acquireLock("t1", 5000)).not.toBeNull();
       });
 
       it("extends a lock when the token matches", async () => {
         const lock = await adapter.acquireLock("t1", 5000);
         expect(lock).not.toBeNull();
-        if (!lock) {
-          return;
-        }
-        const extended = await adapter.extendLock(lock, 10_000);
-        expect(extended).toBe(true);
+        if (!lock) return;
+        expect(await adapter.extendLock(lock, 10_000)).toBe(true);
       });
 
       it("returns false when extending with the wrong token", async () => {
@@ -532,23 +357,6 @@ describe("LibSqlStateAdapter (libsql/promise)", () => {
       it("queueDepth returns 0 for empty queues", async () => {
         expect(await adapter.queueDepth("nobody")).toBe(0);
       });
-    });
-
-    describe("getClient", () => {
-      it("returns the underlying Database", () => {
-        expect(adapter.getClient()).toBe(db);
-      });
-    });
-  });
-
-  describe.skip("integration tests against TURSO_DATABASE_URL", () => {
-    it("connects to the configured remote", async () => {
-      const adapter = createLibSqlState({ logger: mockLogger });
-      await adapter.connect();
-      await adapter.subscribe("slack:C1:1.2");
-      expect(await adapter.isSubscribed("slack:C1:1.2")).toBe(true);
-      await adapter.unsubscribe("slack:C1:1.2");
-      await adapter.disconnect();
     });
   });
 });
