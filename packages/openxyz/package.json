@@ -21,7 +21,7 @@
     "@ai-sdk/openai-compatible": "2.0.41",
     "@openxyz/runtime": "workspace:*",
     "@openxyz/telegram": "workspace:*",
-    "@vercel/functions": "^2",
+    "@vercel/functions": "^3",
     "chat": "catalog:",
     "commander": "^14.0.3",
     "sharp": "^0.34.0",
