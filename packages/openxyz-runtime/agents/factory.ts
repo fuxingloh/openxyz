@@ -1,4 +1,4 @@
-import { ToolLoopAgent, tool, stepCountIs } from "ai";
+import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
 import { matter } from "../utils/frontmatter";
@@ -6,6 +6,7 @@ import { createSkillTool, type SkillDef } from "../tools/skill";
 import { FilesystemTools, FilesystemConfigSchema } from "../tools/filesystem";
 import { web_fetch, web_search } from "../tools/web";
 import type { OpenXyzRuntime } from "../openxyz";
+import { Agent } from "./agent";
 
 const AgentFrontmatterSchema = z.object({
   name: z.string(),
@@ -24,18 +25,6 @@ const AgentDefSchema = AgentFrontmatterSchema.extend({
 });
 
 export type AgentDef = z.infer<typeof AgentDefSchema>;
-
-function formatSkillsXml(skills: SkillDef[]): string {
-  return [
-    "<available_skills>",
-    ...skills.map((s) =>
-      [`  <skill>`, `    <name>${s.name}</name>`, `    <description>${s.description}</description>`, `  </skill>`].join(
-        "\n",
-      ),
-    ),
-    "</available_skills>",
-  ].join("\n");
-}
 
 function formatAgentList(defs: Record<string, AgentDef>): string {
   return Object.values(defs)
@@ -81,7 +70,7 @@ export class AgentFactory {
     this.#runtime = runtime;
   }
 
-  async create(name: string, opts?: { delegate?: boolean }): Promise<ToolLoopAgent> {
+  async create(name: string, opts?: { delegate?: boolean }): Promise<Agent> {
     const def = this.#runtime.agents[name];
     if (!def) {
       const available = Object.keys(this.#runtime.agents).join(", ");
@@ -89,12 +78,11 @@ export class AgentFactory {
     }
 
     const modelName = def.model;
-    const entry = this.#runtime.models[modelName];
-    if (!entry) {
+    const model = this.#runtime.models[modelName];
+    if (!model) {
       const available = Object.keys(this.#runtime.models).join(", ") || "<none>";
       throw new Error(`[openxyz] agent "${name}" references model "${modelName}" — not found. Available: ${available}`);
     }
-    const { raw: model, systemPrompt } = entry;
 
     const tools = this.#loadTools(def);
     // Runtime hard-off: sub-agents spawned via delegate can never re-delegate,
@@ -103,31 +91,16 @@ export class AgentFactory {
     if (opts?.delegate === false) delete tools.delegate;
 
     const skills = this.#filterSkills(def);
-    const instructions = this.#buildInstructions(def, systemPrompt, tools, skills);
 
-    // Step budget: hardcoded 100 as runaway safety net.
-    //  Final step forces text-only response so the agent summarizes rather than cutting off.
-    const maxSteps = 100;
-
-    return new ToolLoopAgent({
+    return new Agent({
+      name,
+      factory: this,
       model,
-      instructions: { role: "system" as const, content: instructions },
       tools,
-      stopWhen: stepCountIs(maxSteps),
-      prepareStep: ({ stepNumber }) => {
-        if (stepNumber >= maxSteps - 1) {
-          return {
-            toolChoice: "none",
-            system: [
-              {
-                role: "system",
-                content: `You've reached the maximum step budget (${maxSteps}). Summarize what you did and respond to the user without calling any more tools.`,
-              },
-            ],
-          };
-        }
-        return undefined;
-      },
+      skills,
+      filesystem: def.filesystem,
+      instructions: def.content,
+      projectInstructions: this.#runtime.mds?.agents,
     });
   }
 
@@ -197,36 +170,5 @@ export class AgentFactory {
     if (def.skills.length === 0) return [];
     const set = new Set(def.skills);
     return this.#runtime.skills.filter((s) => set.has(s.name));
-  }
-
-  #buildInstructions(def: AgentDef, systemPrompt: string, tools: Record<string, Tool>, skills: SkillDef[]): string {
-    // Order: stable prefix first (model's systemPrompt + AGENTS.md), then per-agent sections (skills, env, body)
-    const parts = [systemPrompt];
-
-    if (this.#runtime.mds?.agents) {
-      parts.push("## Project Instructions\n\n" + this.#runtime.mds.agents.trim());
-    }
-
-    if (skills.length > 0 && tools["skill"]) {
-      parts.push(
-        [
-          "## Skills",
-          "",
-          "Skills provide specialized instructions for recurring tasks. When you recognize that a task matches one of the available skills below, use the `skill` tool to load the full instructions before proceeding.",
-          "",
-          formatSkillsXml(skills),
-        ].join("\n"),
-      );
-    }
-
-    const fsConfig = def.filesystem;
-    const access = typeof fsConfig === "string" ? fsConfig : (fsConfig?.["harness"] ?? "read-write");
-    parts.push(["## Environment", "", `- Workspace: /workspace`, `- Filesystem: ${access}`].join("\n"));
-
-    if (def.content) {
-      parts.push(def.content);
-    }
-
-    return parts.join("\n\n");
   }
 }
