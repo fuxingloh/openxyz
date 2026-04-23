@@ -20,6 +20,7 @@ export function virtualRuntimePlugin(): BunPlugin {
   const loadModel = new URL("../../load-model.ts", import.meta.url).pathname;
   const loadTools = new URL("../../load-tools.ts", import.meta.url).pathname;
   const vercelFunctions = Bun.resolveSync("@vercel/functions", openxyzRoot);
+  const stateTurso = Bun.resolveSync("@chat-adapter/state-turso", openxyzRoot);
 
   return {
     name: "openxyz-virtual-runtime",
@@ -32,7 +33,8 @@ export function virtualRuntimePlugin(): BunPlugin {
         loader: "ts",
         contents: [
           `export { OpenXyz } from ${JSON.stringify(runtimeRoot + "openxyz.ts")};`,
-          `export { createChatState } from ${JSON.stringify(runtimeRoot + "databases/index.ts")};`,
+          `export { getDb } from ${JSON.stringify(runtimeRoot + "databases/index.ts")};`,
+          `export { TursoStateAdapter } from ${JSON.stringify(stateTurso)};`,
           `export { WorkspaceDrive } from ${JSON.stringify(runtimeRoot + "workspace.ts")};`,
           `export { loadChannel } from ${JSON.stringify(loadChannel)};`,
           `export { loadModel } from ${JSON.stringify(loadModel)};`,

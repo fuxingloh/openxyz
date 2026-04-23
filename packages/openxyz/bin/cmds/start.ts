@@ -6,7 +6,8 @@ import type { Channel } from "@openxyz/runtime/channels";
 import { loadChannel } from "../load-channel";
 import { parseAgent, type AgentDef } from "@openxyz/runtime/agents/factory";
 import { parseSkill, type SkillDef } from "@openxyz/runtime/tools/skill";
-import { createChatState } from "@openxyz/runtime/databases";
+import { getDb } from "@openxyz/runtime/databases";
+import { TursoStateAdapter } from "@chat-adapter/state-turso";
 import { WorkspaceDrive } from "@openxyz/runtime/workspace";
 import type { Drive } from "@openxyz/runtime/drive";
 import { Command } from "commander";
@@ -32,7 +33,8 @@ async function action(): Promise<void> {
 
   const runtime = await loadRuntime(files);
   const openxyz = new OpenXyz(runtime);
-  const { state, close } = await createChatState(runtime.cwd);
+  const db = await getDb(runtime.cwd);
+  const state = new TursoStateAdapter({ client: db });
   await openxyz.init({ state });
   console.log("openxyz running. Ctrl-C to quit.");
 
@@ -42,7 +44,7 @@ async function action(): Promise<void> {
   });
 
   await openxyz.stop();
-  await close();
+  await db.close();
   process.exit(0);
 }
 
