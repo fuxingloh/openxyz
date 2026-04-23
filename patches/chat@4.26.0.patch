@@ -1,0 +1,52 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 35c50a404b9822f8ec5c9ad6088d0ea711cba804..c483474fbeece1cb3b86476faeb1db94c4f679a3 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -940,7 +940,7 @@ interface LockScopeContext {
+     threadId: string;
+ }
+ /** Concurrency strategy for overlapping messages on the same thread. */
+-type ConcurrencyStrategy = "drop" | "queue" | "debounce" | "concurrent";
++type ConcurrencyStrategy = "drop" | "queue" | "queue-debounce" | "debounce" | "concurrent";
+ /** Fine-grained concurrency configuration. */
+ interface ConcurrencyConfig {
+     /** Debounce window in milliseconds (debounce strategy). Default: 1500. */
+diff --git a/dist/index.js b/dist/index.js
+index b9a97ced2e0d3c0c38c03e97dbcf35391ee9fda4..ecbd69ddaacc4a4f3a7e50250b50004a09c6c68a 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -2975,7 +2975,7 @@ var Chat = class {
+       await this.handleConcurrent(adapter, threadId, message);
+       return;
+     }
+-    if (strategy === "queue" || strategy === "debounce") {
++    if (strategy === "queue" || strategy === "debounce" || strategy === "queue-debounce") {
+       await this.handleQueueOrDebounce(
+         adapter,
+         threadId,
+@@ -3094,6 +3094,25 @@ var Chat = class {
+           debounceMs
+         });
+         await this.debounceLoop(lock, adapter, threadId, lockKey);
++      } else if (strategy === "queue-debounce") {
++        await this._stateAdapter.enqueue(
++          lockKey,
++          {
++            message,
++            enqueuedAt: Date.now(),
++            expiresAt: Date.now() + queueEntryTtlMs
++          },
++          maxQueueSize
++        );
++        this.logger.info("message-queue-debouncing", {
++          threadId,
++          lockKey,
++          messageId: message.id,
++          debounceMs
++        });
++        await sleep(debounceMs);
++        await this._stateAdapter.extendLock(lock, DEFAULT_LOCK_TTL_MS);
++        await this.drainQueue(lock, adapter, threadId, lockKey);
+       } else {
+         await this.dispatchToHandlers(adapter, threadId, message);
+         await this.drainQueue(lock, adapter, threadId, lockKey);

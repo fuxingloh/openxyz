@@ -44,6 +44,7 @@
   },
   "packageManager": "bun@1.3.12",
   "patchedDependencies": {
-    "@chat-adapter/telegram@4.26.0": "patches/chat-adapter-telegram@4.26.0.patch"
+    "@chat-adapter/telegram@4.26.0": "patches/chat-adapter-telegram@4.26.0.patch",
+    "chat@4.26.0": "patches/chat@4.26.0.patch"
   }
 }

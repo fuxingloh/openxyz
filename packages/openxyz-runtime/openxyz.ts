@@ -76,12 +76,15 @@ export class OpenXyz {
     const chat = new Chat({
       adapters: Object.fromEntries(Object.entries(channels).map(([k, v]) => [k, v.adapter])) as Record<string, never>,
       state: opts.state,
-      // Serialize per-thread handlers: a second message arriving while the
-      // agent is mid-turn gets enqueued and drained after the first finishes,
-      // so tool-loops never run concurrently over the same session log
-      // (mnemonic/082). Default is "drop", which silently discards the 2nd —
-      // unusable as an agent harness.
-      concurrency: "queue",
+      // `queue-debounce` (vendored via patches/chat@4.26.0.patch, upstreamed
+      // in the same branch — pending release): first message on an idle thread
+      // waits `debounceMs` so a burst landing in that window collapses into
+      // one handler call with `context.skipped` populated. Subsequent bursts
+      // arriving mid-handler drain through the normal queue path — no orphan
+      // bug like pure `debounce`. Lets the agent respond to "three messages
+      // in 1s" as one turn instead of 1 | 2+3. Cost: +1s baseline latency on
+      // every DM, including lone messages. Acceptable for an assistant.
+      concurrency: { strategy: "queue-debounce", debounceMs: 1000 },
       userName: "openxyz",
       logger: "info",
       fallbackStreamingPlaceholderText: null,
@@ -95,14 +98,16 @@ export class OpenXyz {
     // concurrent messages) doesn't apply. Awaiting keeps the Vercel function
     // alive through the full onMessage flow instead of getting cut short and
     // redispatched via Redis.
-    chat.onDirectMessage(async (thread, message) => {
+    // `onDirectMessage` handler signature is `(thread, message, channel, context)` —
+    // the only tier with a 4-arg shape. The other three are `(thread, message, context)`.
+    chat.onDirectMessage(async (thread, message, _channel, context) => {
       try {
-        await this.onMessage(thread, message);
+        await this.onMessage(thread, message, context?.skipped ?? []);
       } catch (err) {
         console.error("[openxyz] onMessage failed", err);
       }
     });
-    chat.onNewMention(async (thread, message) => {
+    chat.onNewMention(async (thread, message, context) => {
       // First @-mention in an unsubscribed (typically group) thread — subscribe
       // so follow-ups flow through onSubscribedMessage (mnemonic/050).
       try {
@@ -111,14 +116,14 @@ export class OpenXyz {
         console.warn("[openxyz] thread.subscribe failed", err);
       }
       try {
-        await this.onMessage(thread, message);
+        await this.onMessage(thread, message, context?.skipped ?? []);
       } catch (err) {
         console.error("[openxyz] onMessage failed", err);
       }
     });
-    chat.onSubscribedMessage(async (thread, message) => {
+    chat.onSubscribedMessage(async (thread, message, context) => {
       try {
-        await this.onMessage(thread, message);
+        await this.onMessage(thread, message, context?.skipped ?? []);
       } catch (err) {
         console.error("[openxyz] onMessage failed", err);
       }
@@ -126,9 +131,9 @@ export class OpenXyz {
     // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
     // (typically random group chatter). Channel `reply()` decides whether to
     // engage; returning `{}` stays silent.
-    chat.onNewMessage(/.+/, async (thread, message) => {
+    chat.onNewMessage(/.+/, async (thread, message, context) => {
       try {
-        await this.onMessage(thread, message);
+        await this.onMessage(thread, message, context?.skipped ?? []);
       } catch (err) {
         console.error("[openxyz] onMessage failed", err);
       }
@@ -147,7 +152,7 @@ export class OpenXyz {
     return this.#chat.webhooks as Record<string, (request: Request) => Promise<Response>>;
   }
 
-  async onMessage(thread: Thread, message: ChatSdkMessage): Promise<void> {
+  async onMessage(thread: Thread, message: ChatSdkMessage, skipped: ChatSdkMessage[] = []): Promise<void> {
     await thread.subscribe();
     const channel = this.runtime.channels[thread.adapter.name];
     if (!channel) {
@@ -194,12 +199,18 @@ export class OpenXyz {
     // platform message into a UserModelMessage with any platform-specific
     // annotation. History lives in session, not the chat-sdk thread
     // (mnemonic/081).
-    const [system, userMessage, session] = await Promise.all([
+    // Fold any `context.skipped` messages (collected by chat-sdk's
+    // `queue-debounce` mode — see patches/chat@4.26.0.patch) into the same
+    // turn as the latest message. Skipped come first chronologically; the
+    // triggering message is last. The agent sees them as N consecutive user
+    // turns in one LLM call, not N separate stream invocations.
+    const burst = [...skipped, message];
+    const [system, userMessages, session] = await Promise.all([
       channel.systemMessage(thread, message),
-      channel.toModelMessage(thread, message),
+      Promise.all(burst.map((m) => channel.toModelMessage(thread, m))),
       channel.getSession(thread, message),
     ]);
-    await session.append([userMessage]);
+    await session.append(userMessages);
     // Compact before reading history — if session is over budget, replace
     // older turns with a summary. Fail-open; see mnemonic/084.
     await this.#compactIfNeeded(session, thread);
