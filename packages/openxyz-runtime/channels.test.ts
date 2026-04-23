@@ -116,7 +116,7 @@ describe("Session", () => {
     await session.append([userMsg("next")]);
     const msgs = await session.messages();
     const t1Output = (msgs[2] as { content: Array<{ output: { value: string } }> }).content[0]!.output;
-    expect(t1Output.value).toMatch(/^\[pruned \d+ bytes]$/);
+    expect(t1Output.value).toMatch(/^\[pruned \d+ bytes\b/);
   });
 
   test("append — prune preserves toolCallId and toolName", async () => {
@@ -189,7 +189,7 @@ describe("Session", () => {
       (await session.messages())[0] as { content: Array<{ toolCallId: string; output: { value: string } }> }
     ).content;
     expect(parts.length).toBe(3);
-    for (const part of parts) expect(part.output.value).toMatch(/^\[pruned \d+ bytes]$/);
+    for (const part of parts) expect(part.output.value).toMatch(/^\[pruned \d+ bytes\b/);
     expect(parts.map((p) => p.toolCallId)).toEqual(["t1", "t2", "t3"]);
   });
 
@@ -210,9 +210,9 @@ describe("Session", () => {
       (await session.messages())[0] as { content: Array<{ toolCallId: string; output: { value: string } }> }
     ).content;
     const byId = Object.fromEntries(parts.map((p) => [p.toolCallId, p.output.value]));
-    expect(byId.t1).toMatch(/^\[pruned \d+ bytes]$/);
+    expect(byId.t1).toMatch(/^\[pruned \d+ bytes\b/);
     expect(byId.t2).toBe(skillBody);
-    expect(byId.t3).toMatch(/^\[pruned \d+ bytes]$/);
+    expect(byId.t3).toMatch(/^\[pruned \d+ bytes\b/);
     expect(byId.t4).toBe(delegateReport);
   });
 

@@ -186,7 +186,10 @@ function pruneToolOutputs(messages: ModelMessage[]): ModelMessage[] {
         if (NEVER_PRUNE_TOOLS.has(part.toolName)) return part;
         if (isPrunedStub(part.output)) return part;
         const size = JSON.stringify(part.output).length;
-        return { ...part, output: { type: "text" as const, value: `[pruned ${size} bytes]` } };
+        return {
+          ...part,
+          output: { type: "text" as const, value: `[pruned ${size} bytes — re-run the tool if you need this output]` },
+        };
       }),
     } as ModelMessage;
   });
@@ -198,6 +201,6 @@ function isPrunedStub(output: unknown): boolean {
     output !== null &&
     (output as { type?: unknown }).type === "text" &&
     typeof (output as { value?: unknown }).value === "string" &&
-    /^\[pruned \d+ bytes]$/.test((output as { value: string }).value)
+    /^\[pruned \d+ bytes\b/.test((output as { value: string }).value)
   );
 }
