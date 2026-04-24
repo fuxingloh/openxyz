@@ -1,8 +1,62 @@
+diff --git a/node_modules/chat/.bun-tag-834bec242a19c107 b/.bun-tag-834bec242a19c107
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 35c50a404b9822f8ec5c9ad6088d0ea711cba804..c483474fbeece1cb3b86476faeb1db94c4f679a3 100644
+index 35c50a404b9822f8ec5c9ad6088d0ea711cba804..23bd4c89b18646c69c7aa805be0611488fe0517a 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -940,7 +940,7 @@ interface LockScopeContext {
+@@ -288,6 +288,7 @@ declare class ThreadImpl<TState = Record<string, unknown>> implements Thread<TSt
+      */
+     get messages(): AsyncIterable<Message>;
+     get allMessages(): AsyncIterable<Message>;
++    getParticipants(): Promise<Author[]>;
+     isSubscribed(): Promise<boolean>;
+     subscribe(): Promise<void>;
+     unsubscribe(): Promise<void>;
+@@ -410,6 +411,8 @@ interface AddTaskOptions {
+     title: PlanContent;
+ }
+ type UpdateTaskInput = PlanContent | {
++    /** Task ID to update. If omitted, updates the last in_progress task. */
++    id?: string;
+     /** Task output/results. */
+     output?: PlanContent;
+     /** Optional status override. */
+@@ -482,6 +485,12 @@ interface ChatConfig<TAdapters extends Record<string, Adapter> = Record<string,
+      * - `'queue'` — queue the message; when the current handler finishes,
+      *   process only the latest queued message with `context.skipped` containing
+      *   all intermediate messages
++     * - `'queue-debounce'` — like `'queue'`, but the FIRST message in an idle
++     *   thread also waits `debounceMs` so a burst that arrives while the lock is
++     *   free collapses into a single handler invocation. The handler receives
++     *   the latest message with `context.skipped` containing the rest of the
++     *   burst. Subsequent bursts arriving while the handler is running collapse
++     *   via the same `queue` drain mechanism.
+      * - `'debounce'` — all messages start/reset a debounce timer; only the
+      *   final message in a burst is processed
+      * - `'concurrent'` — no locking; all messages processed in parallel
+@@ -772,6 +781,12 @@ interface Adapter<TThreadId = unknown, TRawMessage = unknown> {
+      * @param data - The object data (type depends on kind)
+      */
+     postObject?(threadId: string, kind: string, data: unknown): Promise<RawMessage<TRawMessage>>;
++    /**
++     * Reconstruct fetchData on an attachment after deserialization.
++     * Called during message rehydration for queue/debounce strategies.
++     * Uses fetchMetadata and adapter auth context to rebuild the download closure.
++     */
++    rehydrateAttachment?(attachment: Attachment): Attachment;
+     /** Remove a reaction from a message */
+     removeReaction(threadId: string, messageId: string, emoji: EmojiValue | string): Promise<void>;
+     /** Render formatted content to platform-specific string */
+@@ -828,6 +843,7 @@ interface MarkdownTextChunk {
+     type: "markdown_text";
+ }
+ interface TaskUpdateChunk {
++    details?: string;
+     id: string;
+     output?: string;
+     status: "pending" | "in_progress" | "complete" | "error";
+@@ -940,7 +956,7 @@ interface LockScopeContext {
      threadId: string;
  }
  /** Concurrency strategy for overlapping messages on the same thread. */
@@ -11,11 +65,295 @@ index 35c50a404b9822f8ec5c9ad6088d0ea711cba804..c483474fbeece1cb3b86476faeb1db94
  /** Fine-grained concurrency configuration. */
  interface ConcurrencyConfig {
      /** Debounce window in milliseconds (debounce strategy). Default: 1500. */
+@@ -1190,6 +1206,40 @@ interface Thread<TState = Record<string, unknown>, TRawMessage = unknown> extend
+      * Used internally for reconstructing messages from serialized data.
+      */
+     createSentMessageFromMessage(message: Message<TRawMessage>): SentMessage<TRawMessage>;
++    /**
++     * Get the unique human participants in this thread.
++     *
++     * Scans all messages in the thread and returns deduplicated authors,
++     * excluding the bot itself. Useful for deciding whether to subscribe
++     * based on how many humans are participating — subscribe when it's a
++     * 1:1 conversation, unsubscribe when others join so humans can talk
++     * without the bot replying to every message.
++     *
++     * @returns Array of unique non-bot authors
++     *
++     * @example
++     * ```typescript
++     * // Subscribe only when one person is talking to the bot
++     * bot.onNewMention(async (thread, message) => {
++     *   const participants = await thread.getParticipants();
++     *   if (participants.length === 1) {
++     *     await thread.subscribe();
++     *     await thread.post("I'm here to help!");
++     *   }
++     * });
++     *
++     * // Unsubscribe when the thread becomes a group conversation
++     * bot.onSubscribedMessage(async (thread, message) => {
++     *   const participants = await thread.getParticipants();
++     *   if (participants.length > 1) {
++     *     await thread.unsubscribe();
++     *     return;
++     *   }
++     *   await thread.post("Still here to help!");
++     * });
++     * ```
++     */
++    getParticipants(): Promise<Author[]>;
+     /**
+      * Check if this thread is currently subscribed.
+      *
+@@ -1238,6 +1288,13 @@ interface Thread<TState = Record<string, unknown>, TRawMessage = unknown> extend
+      * const result = await agent.stream({ prompt: message.text });
+      * await thread.post(result.textStream);
+      *
++     * // Stream with options via StreamingPlan PostableObject
++     * const stream = new StreamingPlan(result.fullStream, {
++     *   groupTasks: "plan",
++     *   endWith: [feedbackBlocks],
++     * });
++     * await thread.post(stream);
++     *
+      * // Plan with live updates
+      * const plan = new Plan({ initialMessage: "Working..." });
+      * await thread.post(plan);
+@@ -1562,6 +1619,12 @@ interface Attachment {
+      * this method handles the auth automatically.
+      */
+     fetchData?: () => Promise<Buffer>;
++    /**
++     * Platform-specific metadata needed to reconstruct fetchData after serialization.
++     * Adapters store IDs here (e.g. WhatsApp mediaId, Telegram fileId) so that
++     * fetchData can be rebuilt when a message is rehydrated from the queue.
++     */
++    fetchMetadata?: Record<string, string>;
+     /** Image/video height (if applicable) */
+     height?: number;
+     /** MIME type */
+@@ -2118,6 +2181,7 @@ interface SerializedMessage {
+         size?: number;
+         width?: number;
+         height?: number;
++        fetchMetadata?: Record<string, string>;
+     }>;
+     author: {
+         userId: string;
+@@ -2795,6 +2859,21 @@ declare class Chat<TAdapters extends Record<string, Adapter> = Record<string, Ad
+      * ```
+      */
+     channel(channelId: string): Channel<TState>;
++    /**
++     * Get a Thread handle by its thread ID.
++     *
++     * The adapter is automatically inferred from the thread ID prefix.
++     *
++     * @param threadId - Full thread ID (e.g., "slack:C123ABC:1234567890.123456")
++     * @returns A Thread that can be used to post messages, subscribe, etc.
++     *
++     * @example
++     * ```typescript
++     * const thread = chat.thread("slack:C123ABC:1234567890.123456");
++     * await thread.post("Hello from outside a webhook!");
++     * ```
++     */
++    thread(threadId: string): Thread<TState>;
+     /**
+      * Infer which adapter to use based on the userId format.
+      */
+@@ -2838,6 +2917,15 @@ declare class Chat<TAdapters extends Record<string, Adapter> = Record<string, Ad
+      * Concurrent strategy: no locking, process immediately.
+      */
+     private handleConcurrent;
++    /**
++     * Run `dispatchToHandlers` with a heartbeat that extends `lock` every
++     * `LOCK_HEARTBEAT_MS` until the handler settles. Self-chaining setTimeout
++     * (not setInterval) so each extend completes before the next is scheduled
++     * and the `finally` clearTimeout always cancels the pending tick. Extend
++     * failures log-and-continue — a single failed extend shouldn't kill the
++     * turn, and the lock will expire naturally if extends keep failing.
++     */
++    private dispatchWithHeartbeat;
+     /**
+      * Dispatch a message to the appropriate handler chain based on
+      * subscription status, mention detection, and pattern matching.
+@@ -2953,6 +3041,58 @@ declare class StreamingMarkdownRenderer {
+     private formatAppendOnlyText;
+ }
+ 
++interface StreamingPlanOptions {
++    /**
++     * Block Kit elements to attach when the stream stops (Slack only).
++     * Useful for adding feedback buttons after a streamed response.
++     */
++    endWith?: unknown[];
++    /**
++     * Controls how task_update chunks are displayed (Slack only).
++     * - `"plan"` - all tasks grouped into a single plan block
++     * - `"timeline"` - individual task cards shown inline with text (default)
++     */
++    groupTasks?: "plan" | "timeline";
++    /**
++     * Minimum interval between updates in ms (default: 500).
++     * Used for fallback mode (post+edit on adapters without native streaming).
++     */
++    updateIntervalMs?: number;
++}
++interface StreamingPlanData {
++    options: StreamingPlanOptions;
++    stream: AsyncIterable<string | StreamChunk | StreamEvent>;
++}
++/**
++ * A StreamingPlan wraps an async iterable with platform-specific streaming options.
++ *
++ * Use this when you need to pass options like task grouping or stop blocks
++ * to the streaming API. For simple streaming without options, pass the
++ * async iterable directly to `thread.post()`.
++ *
++ * @example
++ * ```typescript
++ * const stream = new StreamingPlan(result.fullStream, {
++ *   groupTasks: "plan",
++ *   endWith: [feedbackBlock],
++ * });
++ * await thread.post(stream);
++ * ```
++ */
++declare class StreamingPlan implements PostableObject<StreamingPlanData> {
++    readonly $$typeof: symbol;
++    readonly kind = "stream";
++    private readonly _stream;
++    private readonly _options;
++    constructor(stream: AsyncIterable<string | StreamChunk | StreamEvent>, options?: StreamingPlanOptions);
++    get stream(): AsyncIterable<string | StreamChunk | StreamEvent>;
++    get options(): StreamingPlanOptions;
++    getFallbackText(): string;
++    getPostData(): StreamingPlanData;
++    isSupported(_adapter: Adapter): boolean;
++    onPosted(_context: PostableObjectContext): void;
++}
++
+ /**
+  * Get or create an immutable singleton EmojiValue.
+  *
+@@ -3396,4 +3536,4 @@ declare const Select: SelectComponent;
+ declare const SelectOption: SelectOptionComponent;
+ declare const TextInput: TextInputComponent;
+ 
+-export { type ActionEvent, type ActionHandler, Actions, ActionsComponent, type Adapter, type AdapterPostableMessage, type AddTaskOptions, type AiAssistantMessage, type AiFilePart, type AiImagePart, type AiMessage, type AiMessagePart, type AiTextPart, type AiUserMessage, type AppHomeOpenedEvent, type AppHomeOpenedHandler, type AssistantContextChangedEvent, type AssistantContextChangedHandler, type AssistantThreadStartedEvent, type AssistantThreadStartedHandler, type Attachment, type Author, BaseFormatConverter, Button, ButtonComponent, Card, CardChild, CardComponent, CardElement, CardLink, CardLinkComponent, CardText, type Channel, ChannelImpl, type ChannelInfo, type ChannelVisibility, Chat, type ChatConfig, ChatElement, ChatError, type ChatInstance, type CompletePlanOptions, type ConcurrencyConfig, type ConcurrencyStrategy, ConsoleLogger, type CustomEmojiMap, DEFAULT_EMOJI_MAP, type DirectMessageHandler, Divider, DividerComponent, type Emoji, type EmojiFormats, type EmojiMapConfig, EmojiResolver, type EmojiValue, type EphemeralMessage, type FetchDirection, type FetchOptions, type FetchResult, Field, FieldComponent, Fields, FieldsComponent, type FileUpload, type FormatConverter, type FormattedContent, Image, ImageComponent, LinkButton, LinkButtonComponent, type LinkPreview, type ListThreadsOptions, type ListThreadsResult, type Lock, LockError, type LockScope, type LockScopeContext, type LogLevel, type Logger, type MarkdownConverter, type MarkdownTextChunk, type MemberJoinedChannelEvent, type MemberJoinedChannelHandler, type MentionHandler, Message, type MessageContext, type MessageData, type MessageHandler, MessageHistoryCache, type MessageHistoryConfig, type MessageMetadata, Modal, type ModalCloseEvent, type ModalCloseHandler, type ModalCloseResponse, ModalComponent, ModalElement, type ModalErrorsResponse, type ModalPushResponse, type ModalResponse, type ModalSubmitEvent, type ModalSubmitHandler, type ModalUpdateResponse, NotImplementedError, Plan, type PlanContent, type PlanModel, type PlanModelTask, type PlanTask, type PlanTaskStatus, type PlanUpdateChunk, type PostEphemeralOptions, type Postable, type PostableAst, type PostableCard, type PostableMarkdown, type PostableMessage, type PostableObject, type PostableObjectContext, type PostableRaw, type QueueEntry, RadioSelect, RadioSelectComponent, RateLimitError, type RawMessage, type ReactionEvent, type ReactionHandler, type ScheduledMessage, Section, SectionComponent, Select, SelectComponent, SelectOption, SelectOptionComponent, type SentMessage, type SerializedChannel, type SerializedMessage, type SerializedThread, type SlashCommandEvent, type SlashCommandHandler, type StartPlanOptions, type StateAdapter, type StreamChunk, type StreamEvent, type StreamOptions, StreamingMarkdownRenderer, type SubscribedMessageHandler, THREAD_STATE_TTL_MS, Table, type TaskUpdateChunk, TextComponent, TextInput, TextInputComponent, type Thread, ThreadImpl, type ThreadInfo, type ThreadSummary, type UpdateTaskInput, type WebhookOptions, type WellKnownEmoji, blockquote, cardChildToFallbackText, codeBlock, convertEmojiPlaceholders, createEmoji, defaultEmojiResolver, deriveChannelId, emoji, emphasis, fromFullStream, fromReactElement, fromReactModalElement, getEmoji, getNodeChildren, getNodeValue, inlineCode, isBlockquoteNode, isCardElement, isCodeNode, isDeleteNode, isEmphasisNode, isInlineCodeNode, isJSX, isLinkNode, isListItemNode, isListNode, isModalElement, isParagraphNode, isPostableObject, isStrongNode, isTableCellNode, isTableNode, isTableRowNode, isTextNode, link, markdownToPlainText, paragraph, parseMarkdown, reviver, root, strikethrough, stringifyMarkdown, strong, tableElementToAscii, tableToAscii, text, toAiMessages, toCardElement, toModalElement, toPlainText, walkAst };
++export { type ActionEvent, type ActionHandler, Actions, ActionsComponent, type Adapter, type AdapterPostableMessage, type AddTaskOptions, type AiAssistantMessage, type AiFilePart, type AiImagePart, type AiMessage, type AiMessagePart, type AiTextPart, type AiUserMessage, type AppHomeOpenedEvent, type AppHomeOpenedHandler, type AssistantContextChangedEvent, type AssistantContextChangedHandler, type AssistantThreadStartedEvent, type AssistantThreadStartedHandler, type Attachment, type Author, BaseFormatConverter, Button, ButtonComponent, Card, CardChild, CardComponent, CardElement, CardLink, CardLinkComponent, CardText, type Channel, ChannelImpl, type ChannelInfo, type ChannelVisibility, Chat, type ChatConfig, ChatElement, ChatError, type ChatInstance, type CompletePlanOptions, type ConcurrencyConfig, type ConcurrencyStrategy, ConsoleLogger, type CustomEmojiMap, DEFAULT_EMOJI_MAP, type DirectMessageHandler, Divider, DividerComponent, type Emoji, type EmojiFormats, type EmojiMapConfig, EmojiResolver, type EmojiValue, type EphemeralMessage, type FetchDirection, type FetchOptions, type FetchResult, Field, FieldComponent, Fields, FieldsComponent, type FileUpload, type FormatConverter, type FormattedContent, Image, ImageComponent, LinkButton, LinkButtonComponent, type LinkPreview, type ListThreadsOptions, type ListThreadsResult, type Lock, LockError, type LockScope, type LockScopeContext, type LogLevel, type Logger, type MarkdownConverter, type MarkdownTextChunk, type MemberJoinedChannelEvent, type MemberJoinedChannelHandler, type MentionHandler, Message, type MessageContext, type MessageData, type MessageHandler, MessageHistoryCache, type MessageHistoryConfig, type MessageMetadata, Modal, type ModalCloseEvent, type ModalCloseHandler, type ModalCloseResponse, ModalComponent, ModalElement, type ModalErrorsResponse, type ModalPushResponse, type ModalResponse, type ModalSubmitEvent, type ModalSubmitHandler, type ModalUpdateResponse, NotImplementedError, Plan, type PlanContent, type PlanModel, type PlanModelTask, type PlanTask, type PlanTaskStatus, type PlanUpdateChunk, type PostEphemeralOptions, type Postable, type PostableAst, type PostableCard, type PostableMarkdown, type PostableMessage, type PostableObject, type PostableObjectContext, type PostableRaw, type QueueEntry, RadioSelect, RadioSelectComponent, RateLimitError, type RawMessage, type ReactionEvent, type ReactionHandler, type ScheduledMessage, Section, SectionComponent, Select, SelectComponent, SelectOption, SelectOptionComponent, type SentMessage, type SerializedChannel, type SerializedMessage, type SerializedThread, type SlashCommandEvent, type SlashCommandHandler, type StartPlanOptions, type StateAdapter, type StreamChunk, type StreamEvent, type StreamOptions, StreamingMarkdownRenderer, StreamingPlan, type StreamingPlanData, type StreamingPlanOptions, type SubscribedMessageHandler, THREAD_STATE_TTL_MS, Table, type TaskUpdateChunk, TextComponent, TextInput, TextInputComponent, type Thread, ThreadImpl, type ThreadInfo, type ThreadSummary, type UpdateTaskInput, type WebhookOptions, type WellKnownEmoji, blockquote, cardChildToFallbackText, codeBlock, convertEmojiPlaceholders, createEmoji, defaultEmojiResolver, deriveChannelId, emoji, emphasis, fromFullStream, fromReactElement, fromReactModalElement, getEmoji, getNodeChildren, getNodeValue, inlineCode, isBlockquoteNode, isCardElement, isCodeNode, isDeleteNode, isEmphasisNode, isInlineCodeNode, isJSX, isLinkNode, isListItemNode, isListNode, isModalElement, isParagraphNode, isPostableObject, isStrongNode, isTableCellNode, isTableNode, isTableRowNode, isTextNode, link, markdownToPlainText, paragraph, parseMarkdown, reviver, root, strikethrough, stringifyMarkdown, strong, tableElementToAscii, tableToAscii, text, toAiMessages, toCardElement, toModalElement, toPlainText, walkAst };
 diff --git a/dist/index.js b/dist/index.js
-index b9a97ced2e0d3c0c38c03e97dbcf35391ee9fda4..ecbd69ddaacc4a4f3a7e50250b50004a09c6c68a 100644
+index b9a97ced2e0d3c0c38c03e97dbcf35391ee9fda4..ce4dc5e64855def00ebf4f70754f54de44c38642 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -2975,7 +2975,7 @@ var Chat = class {
+@@ -330,7 +330,8 @@ var Message = class _Message {
+         mimeType: att.mimeType,
+         size: att.size,
+         width: att.width,
+-        height: att.height
++        height: att.height,
++        fetchMetadata: att.fetchMetadata
+       })),
+       isMention: this.isMention,
+       links: this.links.length > 0 ? this.links.map((link2) => ({
+@@ -1338,6 +1339,19 @@ var ThreadImpl = class _ThreadImpl {
+       }
+     };
+   }
++  async getParticipants() {
++    const seen = /* @__PURE__ */ new Map();
++    if (this._currentMessage && !this._currentMessage.author.isMe && !this._currentMessage.author.isBot) {
++      seen.set(this._currentMessage.author.userId, this._currentMessage.author);
++    }
++    for await (const message of this.allMessages) {
++      if (message.author.isMe || message.author.isBot || seen.has(message.author.userId)) {
++        continue;
++      }
++      seen.set(message.author.userId, message.author);
++    }
++    return [...seen.values()];
++  }
+   async isSubscribed() {
+     if (this._isSubscribedContext) {
+       return true;
+@@ -1355,6 +1369,16 @@ var ThreadImpl = class _ThreadImpl {
+   }
+   async post(message) {
+     if (isPostableObject(message)) {
++      if (message.kind === "stream") {
++        const data = message.getPostData();
++        const streamOptions = {
++          ...data.options.updateIntervalMs ? { updateIntervalMs: data.options.updateIntervalMs } : {},
++          ...data.options.groupTasks ? { taskDisplayMode: data.options.groupTasks } : {},
++          ...data.options.endWith ? { stopBlocks: data.options.endWith } : {}
++        };
++        await this.handleStream(data.stream, streamOptions);
++        return message;
++      }
+       await this.handlePostableObject(message);
+       return message;
+     }
+@@ -1444,9 +1468,9 @@ var ThreadImpl = class _ThreadImpl {
+    * Normalizes the stream (supports both textStream and fullStream from AI SDK),
+    * then uses adapter's native streaming if available, otherwise falls back to post+edit.
+    */
+-  async handleStream(rawStream) {
++  async handleStream(rawStream, callerOptions) {
+     const textStream = fromFullStream(rawStream);
+-    const options = {};
++    const options = { ...callerOptions };
+     if (this._currentMessage) {
+       options.recipientUserId = this._currentMessage.author.userId;
+       const raw = this._currentMessage.raw;
+@@ -1853,6 +1877,7 @@ function reviver(_key, value) {
+ 
+ // src/chat.ts
+ var DEFAULT_LOCK_TTL_MS = 3e4;
++var LOCK_HEARTBEAT_MS = 15e3;
+ function sleep(ms) {
+   return new Promise((resolve) => setTimeout(resolve, ms));
+ }
+@@ -2865,6 +2890,37 @@ var Chat = class {
+       stateAdapter: this._stateAdapter
+     });
+   }
++  /**
++   * Get a Thread handle by its thread ID.
++   *
++   * The adapter is automatically inferred from the thread ID prefix.
++   *
++   * @param threadId - Full thread ID (e.g., "slack:C123ABC:1234567890.123456")
++   * @returns A Thread that can be used to post messages, subscribe, etc.
++   *
++   * @example
++   * ```typescript
++   * const thread = chat.thread("slack:C123ABC:1234567890.123456");
++   * await thread.post("Hello from outside a webhook!");
++   * ```
++   */
++  thread(threadId) {
++    const adapterName = threadId.split(":")[0];
++    if (!adapterName) {
++      throw new ChatError(
++        `Invalid thread ID: ${threadId}`,
++        "INVALID_THREAD_ID"
++      );
++    }
++    const adapter = this.adapters.get(adapterName);
++    if (!adapter) {
++      throw new ChatError(
++        `Adapter "${adapterName}" not found for thread ID "${threadId}"`,
++        "ADAPTER_NOT_FOUND"
++      );
++    }
++    return this.createThread(adapter, threadId, {}, false);
++  }
+   /**
+    * Infer which adapter to use based on the userId format.
+    */
+@@ -2975,7 +3031,7 @@ var Chat = class {
        await this.handleConcurrent(adapter, threadId, message);
        return;
      }
@@ -24,7 +362,16 @@ index b9a97ced2e0d3c0c38c03e97dbcf35391ee9fda4..ecbd69ddaacc4a4f3a7e50250b50004a
        await this.handleQueueOrDebounce(
          adapter,
          threadId,
-@@ -3094,6 +3094,25 @@ var Chat = class {
+@@ -3024,7 +3080,7 @@ var Chat = class {
+       token: lock.token
+     });
+     try {
+-      await this.dispatchToHandlers(adapter, threadId, message);
++      await this.dispatchWithHeartbeat(lock, adapter, threadId, message);
+     } finally {
+       await this._stateAdapter.releaseLock(lock);
+       this.logger.debug("Lock released", { threadId, lockKey });
+@@ -3094,8 +3150,27 @@ var Chat = class {
            debounceMs
          });
          await this.debounceLoop(lock, adapter, threadId, lockKey);
@@ -48,5 +395,229 @@ index b9a97ced2e0d3c0c38c03e97dbcf35391ee9fda4..ecbd69ddaacc4a4f3a7e50250b50004a
 +        await this._stateAdapter.extendLock(lock, DEFAULT_LOCK_TTL_MS);
 +        await this.drainQueue(lock, adapter, threadId, lockKey);
        } else {
-         await this.dispatchToHandlers(adapter, threadId, message);
+-        await this.dispatchToHandlers(adapter, threadId, message);
++        await this.dispatchWithHeartbeat(lock, adapter, threadId, message);
          await this.drainQueue(lock, adapter, threadId, lockKey);
+       }
+     } finally {
+@@ -3116,7 +3191,7 @@ var Chat = class {
+       if (!entry) {
+         break;
+       }
+-      const msg = this.rehydrateMessage(entry.message);
++      const msg = this.rehydrateMessage(entry.message, adapter);
+       if (Date.now() > entry.expiresAt) {
+         this.logger.info("message-expired", {
+           threadId,
+@@ -3139,7 +3214,7 @@ var Chat = class {
+         lockKey,
+         messageId: msg.id
+       });
+-      await this.dispatchToHandlers(adapter, threadId, msg);
++      await this.dispatchWithHeartbeat(lock, adapter, threadId, msg);
+       break;
+     }
+   }
+@@ -3155,7 +3230,7 @@ var Chat = class {
+         if (!entry) {
+           break;
+         }
+-        const msg = this.rehydrateMessage(entry.message);
++        const msg = this.rehydrateMessage(entry.message, adapter);
+         if (Date.now() <= entry.expiresAt) {
+           pending.push({ message: msg, expiresAt: entry.expiresAt });
+         } else {
+@@ -3186,7 +3261,13 @@ var Chat = class {
+         skipped,
+         totalSinceLastHandler: pending.length
+       };
+-      await this.dispatchToHandlers(adapter, threadId, latest.message, context);
++      await this.dispatchWithHeartbeat(
++        lock,
++        adapter,
++        threadId,
++        latest.message,
++        context
++      );
+     }
+   }
+   /**
+@@ -3195,6 +3276,39 @@ var Chat = class {
+   async handleConcurrent(adapter, threadId, message) {
+     await this.dispatchToHandlers(adapter, threadId, message);
+   }
++  /**
++   * Run `dispatchToHandlers` with a heartbeat that extends `lock` every
++   * `LOCK_HEARTBEAT_MS` until the handler settles. Self-chaining setTimeout
++   * (not setInterval) so each extend completes before the next is scheduled
++   * and the `finally` clearTimeout always cancels the pending tick. Extend
++   * failures log-and-continue — a single failed extend shouldn't kill the
++   * turn, and the lock will expire naturally if extends keep failing.
++   */
++  async dispatchWithHeartbeat(lock, adapter, threadId, message, context) {
++    let timer;
++    let stopped = false;
++    const tick = () => {
++      timer = setTimeout(async () => {
++        if (stopped) return;
++        try {
++          await this._stateAdapter.extendLock(lock, DEFAULT_LOCK_TTL_MS);
++        } catch (err) {
++          this.logger.warn("Lock heartbeat extend failed", {
++            threadId,
++            error: err instanceof Error ? err.message : String(err)
++          });
++        }
++        if (!stopped) tick();
++      }, LOCK_HEARTBEAT_MS);
++    };
++    tick();
++    try {
++      await this.dispatchToHandlers(adapter, threadId, message, context);
++    } finally {
++      stopped = true;
++      if (timer) clearTimeout(timer);
++    }
++  }
+   /**
+    * Dispatch a message to the appropriate handler chain based on
+    * subscription status, mention detection, and pattern matching.
+@@ -3338,35 +3452,44 @@ var Chat = class {
+    * object (not a Message instance). This restores class invariants like
+    * `links` defaulting to `[]` and `metadata.dateSent` being a Date.
+    */
+-  rehydrateMessage(raw) {
++  rehydrateMessage(raw, adapter) {
+     if (raw instanceof Message) {
+       return raw;
+     }
+     const obj = raw;
++    let msg;
+     if (obj._type === "chat:Message") {
+-      return Message.fromJSON(obj);
+-    }
+-    const metadata = obj.metadata;
+-    const dateSent = metadata.dateSent;
+-    const editedAt = metadata.editedAt;
+-    return new Message({
+-      id: obj.id,
+-      threadId: obj.threadId,
+-      text: obj.text,
+-      formatted: obj.formatted,
+-      raw: obj.raw,
+-      author: obj.author,
+-      metadata: {
+-        dateSent: dateSent instanceof Date ? dateSent : new Date(dateSent),
+-        edited: metadata.edited,
+-        editedAt: editedAt ? new Date(
+-          editedAt instanceof Date ? editedAt.toISOString() : editedAt
+-        ) : void 0
+-      },
+-      attachments: obj.attachments ?? [],
+-      isMention: obj.isMention,
+-      links: obj.links ?? []
+-    });
++      msg = Message.fromJSON(obj);
++    } else {
++      const metadata = obj.metadata;
++      const dateSent = metadata.dateSent;
++      const editedAt = metadata.editedAt;
++      msg = new Message({
++        id: obj.id,
++        threadId: obj.threadId,
++        text: obj.text,
++        formatted: obj.formatted,
++        raw: obj.raw,
++        author: obj.author,
++        metadata: {
++          dateSent: dateSent instanceof Date ? dateSent : new Date(dateSent),
++          edited: metadata.edited,
++          editedAt: editedAt ? new Date(
++            editedAt instanceof Date ? editedAt.toISOString() : editedAt
++          ) : void 0
++        },
++        attachments: obj.attachments ?? [],
++        isMention: obj.isMention,
++        links: obj.links ?? []
++      });
++    }
++    const rehydrate = adapter?.rehydrateAttachment?.bind(adapter);
++    if (rehydrate && msg.attachments.length > 0) {
++      msg.attachments = msg.attachments.map(
++        (att) => att.fetchData ? att : rehydrate(att)
++      );
++    }
++    return msg;
+   }
+   async runHandlers(handlers, thread, message, context) {
+     for (const handler of handlers) {
+@@ -3494,13 +3617,17 @@ var Plan = class {
+       return null;
+     }
+     let current;
+-    for (let i = this._model.tasks.length - 1; i >= 0; i--) {
+-      if (this._model.tasks[i].status === "in_progress") {
+-        current = this._model.tasks[i];
+-        break;
++    if (typeof update === "object" && update !== null && "id" in update && update.id) {
++      current = this._model.tasks.find((t) => t.id === update.id);
++    } else {
++      for (let i = this._model.tasks.length - 1; i >= 0; i--) {
++        if (this._model.tasks[i].status === "in_progress") {
++          current = this._model.tasks[i];
++          break;
++        }
+       }
++      current ??= this._model.tasks.at(-1);
+     }
+-    current ??= this._model.tasks.at(-1);
+     if (!current) {
+       return null;
+     }
+@@ -3589,6 +3716,38 @@ var Plan = class {
+   }
+ };
+ 
++// src/streaming-plan.ts
++var StreamingPlan = class {
++  $$typeof = POSTABLE_OBJECT;
++  kind = "stream";
++  _stream;
++  _options;
++  constructor(stream, options = {}) {
++    this._stream = stream;
++    this._options = options;
++  }
++  get stream() {
++    return this._stream;
++  }
++  get options() {
++    return this._options;
++  }
++  getFallbackText() {
++    return "";
++  }
++  getPostData() {
++    return {
++      stream: this._stream,
++      options: this._options
++    };
++  }
++  isSupported(_adapter) {
++    return true;
++  }
++  onPosted(_context) {
++  }
++};
++
+ // src/emoji.ts
+ var emojiRegistry = /* @__PURE__ */ new Map();
+ function getEmoji(name) {
+@@ -4034,6 +4193,7 @@ export {
+   Select2 as Select,
+   SelectOption2 as SelectOption,
+   StreamingMarkdownRenderer,
++  StreamingPlan,
+   THREAD_STATE_TTL_MS,
+   Table2 as Table,
+   TextInput2 as TextInput,
