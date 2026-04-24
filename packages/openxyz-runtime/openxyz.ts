@@ -91,20 +91,20 @@ export class OpenXyz {
     });
 
     // chat-sdk dispatch is tiered with early returns (mnemonic/059).
-    // Fan out every incoming-message tier into a single `onMessage` so channel
+    // Fan out every incoming-message tier into a single `onMessages` so channel
     // files own the decision via `action()` regardless of how chat-sdk routed.
     // Handlers await — serverless invocations run one message at a time, so the
     // LockError risk from mnemonic/004 (long-running local process with
     // concurrent messages) doesn't apply. Awaiting keeps the Vercel function
-    // alive through the full onMessage flow instead of getting cut short and
+    // alive through the full onMessages flow instead of getting cut short and
     // redispatched via Redis.
     // `onDirectMessage` handler signature is `(thread, message, channel, context)` —
     // the only tier with a 4-arg shape. The other three are `(thread, message, context)`.
     chat.onDirectMessage(async (thread, message, _channel, context) => {
       try {
-        await this.onMessage(thread, message, context?.skipped ?? []);
+        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
       } catch (err) {
-        console.error("[openxyz] onMessage failed", err);
+        console.error("[openxyz] onMessages failed", err);
       }
     });
     chat.onNewMention(async (thread, message, context) => {
@@ -116,16 +116,16 @@ export class OpenXyz {
         console.warn("[openxyz] thread.subscribe failed", err);
       }
       try {
-        await this.onMessage(thread, message, context?.skipped ?? []);
+        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
       } catch (err) {
-        console.error("[openxyz] onMessage failed", err);
+        console.error("[openxyz] onMessages failed", err);
       }
     });
     chat.onSubscribedMessage(async (thread, message, context) => {
       try {
-        await this.onMessage(thread, message, context?.skipped ?? []);
+        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
       } catch (err) {
-        console.error("[openxyz] onMessage failed", err);
+        console.error("[openxyz] onMessages failed", err);
       }
     });
     // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
@@ -133,9 +133,9 @@ export class OpenXyz {
     // engage; returning `{}` stays silent.
     chat.onNewMessage(/.+/, async (thread, message, context) => {
       try {
-        await this.onMessage(thread, message, context?.skipped ?? []);
+        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
       } catch (err) {
-        console.error("[openxyz] onMessage failed", err);
+        console.error("[openxyz] onMessages failed", err);
       }
     });
 
@@ -152,27 +152,72 @@ export class OpenXyz {
     return this.#chat.webhooks as Record<string, (request: Request) => Promise<Response>>;
   }
 
-  async onMessage(thread: Thread, message: ChatSdkMessage, skipped: ChatSdkMessage[] = []): Promise<void> {
+  /**
+   * Handles a debounce-window batch of messages as one agent turn. The last
+   * element is the triggering message (the one chat-sdk dispatched on);
+   * anything earlier is `context.skipped` from `queue-debounce`, folded into
+   * the same LLM call.
+   *
+   * `channel.reply()` runs over every message so allowlist / agent-routing
+   * gates apply uniformly — without this, a non-allowlisted author's message
+   * (group chat, mixed debounce window) would ride in on an allowlisted
+   * trigger. The last message's reply drives typing/reaction/agent (it's the
+   * one chat-sdk dispatched on); only messages whose routing resolves to the
+   * same agent are kept (prevents cross-agent leakage, e.g. guest messages
+   * folded into an auto turn).
+   */
+  async onMessages(thread: Thread, messages: ChatSdkMessage[]): Promise<void> {
+    if (messages.length === 0) return;
+
     await thread.subscribe();
     const channel = this.runtime.channels[thread.adapter.name];
     if (!channel) {
       throw new Error(`[openxyz] no channel config for adapter "${thread.adapter.name}"`);
     }
 
-    const reply = await channel.reply(thread, message);
+    const actions = await Promise.all(
+      messages.map(async (message) => ({ message, reply: await channel.reply(thread, message) })),
+    );
+    const last = actions[actions.length - 1]!;
 
-    if (reply.typing) {
-      const status = typeof reply.typing === "string" ? reply.typing : undefined;
-      thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
-    }
-
-    if (reply.reaction) {
+    // Reactions fire per-message — every incoming message with a
+    // `reply.reaction` gets its own emoji on its own message. Fire-and-
+    // forget; a single failed reaction can't block the turn.
+    for (const { message, reply } of actions) {
+      if (!reply.reaction) continue;
       thread.adapter
         .addReaction(thread.id, message.id, reply.reaction)
         .catch((err) => console.warn("[openxyz] addReaction failed", err));
     }
 
-    if (!reply.agent) return;
+    // Typing indicator fires once, keyed off the last reply (the one
+    // chat-sdk actually dispatched on). Multiple `startTyping` calls would
+    // race and flicker the indicator.
+    if (last.reply.typing) {
+      const status = typeof last.reply.typing === "string" ? last.reply.typing : undefined;
+      thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
+    }
+
+    if (!last.reply.agent) return;
+
+    // Messages that route to a different agent than the trigger (or to no
+    // agent at all) get dropped here. Happens in mixed-author debounce
+    // windows — e.g. a guest-user message lands alongside an allowlisted
+    // user's trigger (mnemonic/091). Surface it: the dropped message won't
+    // be answered, and the author might wonder why.
+    const routed: ChatSdkMessage[] = [];
+    const dropped: Array<{ message: ChatSdkMessage; agent: string | undefined }> = [];
+    for (const { message, reply } of actions) {
+      if (reply.agent === last.reply.agent) routed.push(message);
+      else dropped.push({ message, agent: reply.agent });
+    }
+    if (dropped.length > 0) {
+      console.warn(
+        `[openxyz] ${dropped.length}/${actions.length} message(s) arrived together but routed to a different agent than the trigger "${last.reply.agent}" — dropping: ${dropped
+          .map(({ message, agent }) => `msg ${message.id} → ${agent ?? "<no agent>"}`)
+          .join(", ")}`,
+      );
+    }
 
     // Pre-turn refresh — drives sync down remote state (git pull, etc.)
     // before the agent runs. Failures mean the drive is stale; the agent
@@ -193,28 +238,13 @@ export class OpenXyz {
       }
     }
 
-    const agent = await this.agentFactory.create(reply.agent);
-    // Channel decides session scope (thread-scoped by default, channel-scoped
-    // for Telegram groups, etc.). toModelMessage converts the incoming
-    // platform message into a UserModelMessage with any platform-specific
-    // annotation. History lives in session, not the chat-sdk thread
-    // (mnemonic/081).
-    // Fold any `context.skipped` messages (collected by chat-sdk's
-    // `queue-debounce` mode — see patches/chat@4.26.0.patch) into the same
-    // turn as the latest message. Skipped come first chronologically; the
-    // triggering message is last. The agent sees them as N consecutive user
-    // turns in one LLM call, not N separate stream invocations.
-    const burst = [...skipped, message];
-    const [system, userMessages, session] = await Promise.all([
-      channel.systemMessage(thread, message),
-      Promise.all(burst.map((m) => channel.toModelMessage(thread, m))),
-      channel.getSession(thread, message),
-    ]);
-    // Agent owns the turn: session.append(user), between-turn compaction,
-    // stream, per-step session persistence, mid-turn prompt compaction, and
-    // thread.post. Errors are caught inside and surfaced as a fallback post,
-    // so drive.commit below always runs.
-    await agent.run({ system, userMessages, session, thread });
+    const agent = await this.agentFactory.create(last.reply.agent);
+    // Agent owns the turn from here: channel resolution (systemMessage +
+    // toModelMessage + getSession in parallel), session.append(user),
+    // between-turn compaction, stream, per-step session persistence,
+    // mid-turn prompt compaction, and thread.post. Errors are caught inside
+    // and surfaced as a fallback post, so drive.commit below always runs.
+    await agent.run({ channel, thread, messages: routed });
 
     // Post-turn commit — writable drives flush edits (git commit + push, etc.)
     // Unlike `refresh`, `commit` failures ARE user-facing: edits didn't make

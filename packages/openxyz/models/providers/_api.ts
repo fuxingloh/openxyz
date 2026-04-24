@@ -19,6 +19,7 @@
 
 export type ModelLimit = {
   context?: number;
+  output?: number;
 };
 
 export type Registry = Record<string, ModelLimit>;
@@ -126,9 +127,9 @@ export async function prefetchForBuild(openxyzModel: string | undefined): Promis
     if (sep === -1) return {};
     const providerId = openxyzModel.slice(0, sep);
     const modelId = openxyzModel.slice(sep + 1);
-    const ctx = data[providerId]?.models?.[modelId]?.limit?.context;
-    if (typeof ctx === "number") {
-      return { [`${providerId}/${modelId}`]: { context: ctx } };
+    const entry = data[providerId]?.models?.[modelId]?.limit;
+    if (entry && typeof entry.context === "number") {
+      return { [`${providerId}/${modelId}`]: { context: entry.context, output: entry.output } };
     }
     return {};
   }
@@ -142,14 +143,14 @@ export async function prefetchForBuild(openxyzModel: string | undefined): Promis
       if (!model.tool_call) continue;
       const ctx = model.limit?.context;
       if (typeof ctx === "number") {
-        out[`${providerId}/${modelId}`] = { context: ctx };
+        out[`${providerId}/${modelId}`] = { context: ctx, output: model.limit?.output };
       }
     }
   }
   return out;
 }
 
-type RawEntry = { limit?: { context?: number }; tool_call?: boolean };
+type RawEntry = { limit?: { context?: number; output?: number }; tool_call?: boolean };
 
 async function fetchApi(): Promise<Record<string, { models?: Record<string, RawEntry> }> | null> {
   try {
@@ -174,7 +175,7 @@ async function liveFetch(): Promise<Registry> {
     if (!provider?.models) continue;
     for (const [modelId, model] of Object.entries(provider.models)) {
       if (typeof model.limit?.context === "number") {
-        out[`${providerId}/${modelId}`] = { context: model.limit.context };
+        out[`${providerId}/${modelId}`] = { context: model.limit.context, output: model.limit.output };
       }
     }
   }

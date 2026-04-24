@@ -6,49 +6,152 @@ import {
   type SystemModelMessage,
   type Tool,
 } from "ai";
-import { estimateTokens, type Session, type Thread } from "../channels";
+import { estimateTokens, type Channel, type Message, type Session, type Thread } from "../channels";
 import type { Model } from "../model";
-import type { FilesystemConfig } from "../tools/filesystem";
 import type { SkillDef } from "../tools/skill";
-import type { AgentFactory } from "./factory";
+import type { AgentDef, AgentFactory } from "./factory";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Token-budget constants. Reserve-based (mnemonic/099 — opencode pattern):
+//
+//   Compaction trigger (pre-stream + mid-stream, same threshold):
+//     reserve = min(COMPACT_RESERVE, model.limit.output ?? COMPACT_RESERVE)
+//     #compactThreshold = max(1, model.limit.context − reserve)
+//     → "leave enough room for the model's next response; only compact
+//       when the prompt is about to crowd that reserve."
+//
+//   Compact-agent input cap (capacity of the compact agent ITSELF):
+//     #compactInputCap = ⌊COMPACT_INPUT_RATIO × model.limit.context⌋
+//     → orthogonal to WHEN we compact — this is what the compact agent
+//       can chew in one `generate()` call without blowing its own window.
+//
+// Concrete per-model (assumes models.dev populates `output`):
+//
+//   model            | context | output  | reserve | threshold | inputCap
+//   -----------------|---------|---------|---------|-----------|---------
+//   tiny             |     32K |     4K  |     4K  |      28K  |     24K
+//   Sonnet 4.6       |    200K |     8K  |     8K  |     192K  |    150K
+//   Opus 4.7 (1M)    |      1M |    32K  |    32K  |     968K  |    750K
+//   unknown output   |      1M |    —    |    40K  |     960K  |    750K
+//
+// Headroom:
+//   • Threshold always leaves AT LEAST `reserve` tokens for the model's
+//     next response. No more "leaves 95% of context unused on big models"
+//     (old flat 40K problem, mnemonic/099).
+//   • #compactInputCap: what the compact agent can absorb in one call.
+//     On big models with high thresholds, compact-input cap < threshold
+//     is fine — the `toSummarize` gets hardTruncate'd before handoff,
+//     dropping oldest content (which is typically already pruned).
+//   • Model ceiling is the hard wall nothing gets past.
+//
+// Pathological edge case: `context < reserve` (e.g. 32K ctx + unknown
+// output falling back to 40K reserve) → threshold clamps to 1 via
+// `max(1, …)` → every turn compacts. Workaround: template sets
+// `limit.output` explicitly. Won't happen on any shipped provider
+// (models.dev populates both `context` and `output`).
+// ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Between-turn threshold — session log checked before `agent.stream()` starts.
- * Hitting this means the NEXT prompt is expensive; compaction replaces older
- * turns on disk, affecting cost from the following turn onward.
+ * Reserve — target headroom (in tokens) to leave between the compacted
+ * prompt and the model's context ceiling. Sized so the model has room to
+ * emit its next response + a tool-call/tool-result round-trip without
+ * the turn blowing the window.
+ *
+ * Per-Agent derivation (in the constructor):
+ *   reserve = min(COMPACT_RESERVE, model.limit.output ?? COMPACT_RESERVE)
+ *   #compactThreshold = max(1, model.limit.context − reserve)
+ *
+ * The `min(...)` with `output` caps the reserve at the model's actual
+ * max-output capacity — no point reserving 40K on a model that only emits
+ * 8K. Matches opencode's `reserved = min(COMPACTION_BUFFER, maxOutputTokens)`
+ * (mnemonic/099, opencode `overflow.ts:17`).
+ *
+ * Between-turn trigger (pre-stream, once per turn — `#compactSession`):
+ *   estimateTokens(session) × SAFETY_MARGIN  ≥  #compactThreshold
+ *
+ * Mid-turn trigger (every step — `#maybeCompactPrompt`):
+ *   estimateTokens(effective) × SAFETY_MARGIN  ≥  #compactThreshold
+ *
+ *   where effective = fence
+ *                       ? [fence.summary, ...messages[fence.untilIdx..]]
+ *                       : messages
+ *
+ * Rationale for reserve-based (vs flat-40K, vs ratio × context):
+ *   - Uses the capacity the model actually has — 1M-context models stop
+ *     leaving 960K on the floor (old flat-40K problem, mnemonic/099).
+ *   - Invariant users actually care about: "model always has room to
+ *     respond", not "conversation stays below N tokens."
+ *   - Matches opencode's production design — proven at scale.
  */
-const BETWEEN_TURN_THRESHOLD = 40_000;
+const COMPACT_RESERVE = 40_000;
 
 /**
- * Mid-turn threshold — the in-flight prompt checked in `prepareStep`. Hitting
- * this means THIS turn is about to exceed the model's own context window on
- * the next step. Set higher than between-turn because mid-turn compaction
- * costs a step-boundary stall; we only want to fire when the turn is
- * genuinely close to the model's ceiling.
+ * Compact-agent input ratio — fraction of the model's context window the
+ * compact agent itself is allowed to receive. The compact agent runs via
+ * `generate()` (no `prepareStep`, no self-compaction), so feeding it a
+ * full-context prompt would blow its own window.
+ *
+ * Per-Agent derivation (in the constructor):
+ *   #compactInputCap = ⌊context × COMPACT_INPUT_RATIO⌋
+ *                    = ⌊context × 0.75⌋
+ *
+ * 0.75 leaves `context × 0.25` headroom for the compact agent's own system
+ * prompt + summarization request. Applied before handoff:
+ *
+ *   if estimateTokens(toSummarize) > #compactInputCap
+ *       → toSummarize = hardTruncate(toSummarize, #compactInputCap)
+ *
+ * With reserve-based `#compactThreshold`, `toSummarize` on big-context
+ * models may exceed this cap (e.g. 968K threshold > 750K cap on a 1M
+ * model). `hardTruncate` drops the oldest content — typically already
+ * pruned via `Session.append` (mnemonic/083), so the loss is minimal.
  */
-const MID_TURN_THRESHOLD = 140_000;
+const COMPACT_INPUT_RATIO = 0.75;
 
-/** Compensates for bytes/4 underestimate on dense content (mnemonic/087). */
+/**
+ * Compensates for `bytes/4` heuristic underestimate on dense content — code,
+ * JSON, tool-call serializations (mnemonic/087). Applied at every threshold
+ * comparison: `estimateTokens(...) * SAFETY_MARGIN  {>=,<}  THRESHOLD`. A
+ * real tokenizer would give exact counts; 1.2 eats the 15-25% gap that
+ * `bytes/4` can undercount on tool-heavy transcripts.
+ *
+ * Also used to derive the hard-truncate budget during mid-turn runaway:
+ *   budget = ⌊#compactThreshold / SAFETY_MARGIN⌋
+ */
 const SAFETY_MARGIN = 1.2;
 
 /**
- * Number of most-recent messages the mid-turn fence tries to keep intact.
- * The actual preserved count floats — `safeBoundary` snaps forward to the
- * next tool-pair-safe index.
+ * Target size of the tail the mid-turn fence keeps verbatim. Everything
+ * older gets folded into the summary.
+ *
+ *   target = max(1, messages.length - MID_TURN_PRESERVE_TAIL)
+ *          = max(1, messages.length - 20)
+ *   newCut = safeBoundary(messages, target)   ← snaps forward past tool pairs
+ *
+ * Fence must advance strictly forward — if `newCut ≤ fence.untilIdx` the
+ * tail itself is the problem and we hard-truncate instead.
+ *
+ * Count-based (not token-based) by design: protects continuity of the
+ * current task regardless of message size. Expanding with context scaling
+ * would preserve more messages on bigger-context models, which isn't what
+ * we want — recent reasoning is recent reasoning.
  */
 const MID_TURN_PRESERVE_TAIL = 20;
 
 /**
- * Cap on the compact agent's own input. `generate()` doesn't self-compact
- * (no `prepareStep` mid-compaction recursion), so feeding it 200K tokens
- * would blow its own context. Hard-truncate before handing off.
- */
-const COMPACT_INPUT_CAP = 150_000;
-
-/**
- * Tool-loop step budget — runaway safety net. The final-step guard in
- * `#prepareStep` forces a text-only summary on step `MAX_STEPS - 1` so the
- * agent wraps up cleanly instead of getting cut off mid-tool-call.
+ * Tool-loop step budget — runaway safety net. Two separate effects:
+ *
+ *   1. Hard stop via `stopWhen: stepCountIs(MAX_STEPS)` — the loop exits
+ *      after step 100 finishes, no matter what.
+ *
+ *   2. Final-step guard in `#prepareStep`:
+ *        trigger:  args.stepNumber  ≥  MAX_STEPS - 1
+ *                  args.stepNumber  ≥  99
+ *        effect:   force `toolChoice: "none"` + inject a "wrap up, no more
+ *                  tools" system msg so the agent emits a clean text reply
+ *                  instead of cutting off mid-tool-call on step 100.
+ *
+ * 100 is "something is very wrong" territory; normal turns finish in 1-15.
  */
 const MAX_STEPS = 100;
 
@@ -60,7 +163,7 @@ const MAX_STEPS = 100;
  *  - max-step guard forcing a text-only summary on the final step
  *
  * Instances are turn-scoped: the compaction fence lives in the instance and
- * is only safe for one concurrent `run()`. `openxyz.ts#onMessage` creates a
+ * is only safe for one concurrent `run()`. `openxyz.ts#onMessages` creates a
  * fresh agent per incoming message, so reentrancy isn't a concern.
  *
  * `generate()` is the no-frills one-shot path — sub-agents spawned via the
@@ -73,6 +176,21 @@ export class Agent {
   readonly #inner: ToolLoopAgent;
 
   /**
+   * Compaction trigger for both between-turn and mid-turn paths. Derived
+   * from `config.model.limit.context − reserve` at construction; see the
+   * constant block header for the reserve formula and rationale.
+   */
+  readonly #compactThreshold: number;
+
+  /**
+   * Cap on compact-agent input, scaled from `config.model.limit.context` at
+   * construction. See the constant block header for the derivation formula.
+   * Orthogonal to `#compactThreshold` — this is what the compact agent
+   * ITSELF can chew in one `generate()` call.
+   */
+  readonly #compactInputCap: number;
+
+  /**
    * Per-turn fence tracking the summary-replacement window. Undefined outside
    * a `run()` call. Advances forward only; every `prepareStep` projects
    * `[summary, ...messages.slice(untilIdx)]` so each step sees the compacted
@@ -82,20 +200,32 @@ export class Agent {
   #fence: { summary: ModelMessage; untilIdx: number } | undefined;
 
   constructor(config: {
-    name: string;
+    def: AgentDef;
     factory: AgentFactory;
     /** Canonical runtime model — `raw` + `systemPrompt` + `limit`. */
     model: Model;
     tools: Record<string, Tool>;
     skills: SkillDef[];
-    filesystem: FilesystemConfig;
-    /** Per-agent markdown body (frontmatter's `content`). */
-    instructions: string;
-    /** Project-wide AGENTS.md content, if any. */
-    projectInstructions?: string;
+    /**
+     * Project-wide markdown files (AGENTS.md today; USER.md, MEMORY.md,
+     * BOOTSTRAP.md, HEARTBEAT.md under mnemonic/039). Passed through as the
+     * whole bag so Agent can opt into new entries without a factory change.
+     * Shape mirrors `OpenXyzRuntime.mds` — keep them in sync.
+     */
+    mds?: { agents?: string };
   }) {
-    this.name = config.name;
+    this.name = config.def.name;
     this.#factory = config.factory;
+
+    // Reserve-based threshold — cap the reserve at the model's actual max
+    // output so we don't over-reserve on models that can't emit that much
+    // anyway. Unknown output → full COMPACT_RESERVE, which is safe except
+    // on pathologically tiny context (see header block).
+    const context = config.model.limit.context;
+    const reserve = Math.min(COMPACT_RESERVE, config.model.limit.output ?? COMPACT_RESERVE);
+    this.#compactThreshold = Math.max(1, context - reserve);
+    this.#compactInputCap = Math.floor(context * COMPACT_INPUT_RATIO);
+
     this.#inner = new ToolLoopAgent({
       model: config.model.raw,
       instructions: {
@@ -104,9 +234,8 @@ export class Agent {
           systemPrompt: config.model.systemPrompt,
           tools: config.tools,
           skills: config.skills,
-          filesystem: config.filesystem,
-          instructions: config.instructions,
-          projectInstructions: config.projectInstructions,
+          def: config.def,
+          projectInstructions: config.mds?.agents,
         }),
       },
       tools: config.tools,
@@ -128,17 +257,35 @@ export class Agent {
   }
 
   /**
-   * Top-level turn: persist user turn → compact session if over threshold →
-   * stream → per-step append → post to thread. Errors are caught and surfaced
-   * as a fallback thread post so `onMessage` can still run drive.commit.
+   * Top-level turn — drives the full incoming-message flow:
+   *   channel.systemMessage + toModelMessage + getSession (parallel fetch) →
+   *   persist user turn → compact session if over threshold → stream →
+   *   per-step append → post to thread. Errors are caught and surfaced as a
+   *   fallback thread post so the caller (`onMessage`) can still run
+   *   drive.commit after `run()` returns.
+   *
+   * `messages` is the full burst from `queue-debounce` (mnemonic/097) —
+   * typically `[...context.skipped, triggeringMessage]`. The triggering
+   * message (last in the array) is what `systemMessage` and `getSession`
+   * key off of.
    */
-  async run(input: {
-    system: SystemModelMessage;
-    userMessages: ModelMessage[];
-    session: Session;
-    thread: Thread;
-  }): Promise<void> {
-    const { system, userMessages, session, thread } = input;
+  async run(input: { channel: Channel; thread: Thread; messages: Message[] }): Promise<void> {
+    const { channel, thread, messages } = input;
+    if (messages.length === 0) {
+      throw new Error(`[openxyz] agent "${this.name}" run() called with empty messages array`);
+    }
+    const triggering = messages[messages.length - 1]!;
+
+    // Channel decides session scope (thread-scoped by default, channel-
+    // scoped for Telegram groups, etc.). `toModelMessage` converts each
+    // incoming platform message into a UserModelMessage with any platform-
+    // specific annotation (reply/forward XML, etc.). History lives in
+    // session, not the chat-sdk thread (mnemonic/081).
+    const [system, userMessages, session] = await Promise.all([
+      channel.systemMessage(thread, triggering),
+      Promise.all(messages.map((m) => channel.toModelMessage(thread, m))),
+      channel.getSession(thread, triggering),
+    ]);
 
     await session.append(userMessages);
     await this.#compactSession(session, thread);
@@ -216,9 +363,11 @@ export class Agent {
     const project = () => (this.#fence ? [this.#fence.summary, ...messages.slice(this.#fence.untilIdx)] : messages);
 
     const effective = project();
-    if (estimateTokens(effective) * SAFETY_MARGIN < MID_TURN_THRESHOLD) {
+    if (estimateTokens(effective) * SAFETY_MARGIN < this.#compactThreshold) {
       return this.#fence ? { messages: effective } : undefined;
     }
+
+    const hardBudget = Math.floor(this.#compactThreshold / SAFETY_MARGIN);
 
     // Over budget — advance the fence. Target the tail length, then snap
     // forward to the next tool-pair-safe index so we never orphan results.
@@ -228,15 +377,13 @@ export class Agent {
     // Fence must advance. If it can't, the tail itself is the budget problem
     // — hard truncate the projected prompt as last resort.
     if (this.#fence && newCut <= this.#fence.untilIdx) {
-      return {
-        messages: hardTruncate(effective, Math.floor(MID_TURN_THRESHOLD / SAFETY_MARGIN)),
-      };
+      return { messages: hardTruncate(effective, hardBudget) };
     }
     if (newCut <= 0) return undefined;
 
     let toSummarize = messages.slice(0, newCut);
-    if (estimateTokens(toSummarize) > COMPACT_INPUT_CAP) {
-      toSummarize = hardTruncate(toSummarize, COMPACT_INPUT_CAP);
+    if (estimateTokens(toSummarize) > this.#compactInputCap) {
+      toSummarize = hardTruncate(toSummarize, this.#compactInputCap);
     }
 
     try {
@@ -258,17 +405,13 @@ export class Agent {
       const next = [summary, ...messages.slice(newCut)];
       // Runaway guard — if summary + preserved still blows budget, hard
       // truncate rather than looping indefinitely.
-      if (estimateTokens(next) * SAFETY_MARGIN >= MID_TURN_THRESHOLD) {
-        return {
-          messages: hardTruncate(next, Math.floor(MID_TURN_THRESHOLD / SAFETY_MARGIN)),
-        };
+      if (estimateTokens(next) * SAFETY_MARGIN >= this.#compactThreshold) {
+        return { messages: hardTruncate(next, hardBudget) };
       }
       return { messages: next };
     } catch (err) {
       console.warn("[openxyz] mid-turn compaction failed, hard-truncating", err);
-      return {
-        messages: hardTruncate(effective, Math.floor(MID_TURN_THRESHOLD / SAFETY_MARGIN)),
-      };
+      return { messages: hardTruncate(effective, hardBudget) };
     }
   }
 
@@ -280,7 +423,7 @@ export class Agent {
    */
   async #compactSession(session: Session, thread: Thread): Promise<void> {
     const messages = await session.messages();
-    if (estimateTokens(messages) * SAFETY_MARGIN < BETWEEN_TURN_THRESHOLD) return;
+    if (estimateTokens(messages) * SAFETY_MARGIN < this.#compactThreshold) return;
 
     // Preserve last 2 user turns verbatim. User messages act as turn
     // boundaries; slicing at the second-to-last user index captures two
@@ -299,8 +442,8 @@ export class Agent {
     try {
       const compact = await this.#factory.create("compact", { delegate: false });
       let input = toSummarize;
-      if (estimateTokens(input) > COMPACT_INPUT_CAP) {
-        input = hardTruncate(input, COMPACT_INPUT_CAP);
+      if (estimateTokens(input) > this.#compactInputCap) {
+        input = hardTruncate(input, this.#compactInputCap);
       }
       const result = await compact.generate({
         prompt: [
@@ -318,9 +461,9 @@ export class Agent {
       await session.replace([summary, ...toPreserve]);
 
       const nextTokens = estimateTokens(await session.messages());
-      if (nextTokens * SAFETY_MARGIN >= BETWEEN_TURN_THRESHOLD) {
+      if (nextTokens * SAFETY_MARGIN >= this.#compactThreshold) {
         console.error(
-          `[openxyz] session compaction left ${nextTokens} tokens (×${SAFETY_MARGIN} margin, threshold ${BETWEEN_TURN_THRESHOLD}) — proceeding with oversized prompt`,
+          `[openxyz] session compaction left ${nextTokens} tokens (×${SAFETY_MARGIN} margin, threshold ${this.#compactThreshold}) — proceeding with oversized prompt`,
         );
       }
     } catch (err) {
@@ -373,8 +516,7 @@ function buildSystemPrompt(config: {
   systemPrompt: string;
   tools: Record<string, Tool>;
   skills: SkillDef[];
-  filesystem: FilesystemConfig;
-  instructions: string;
+  def: AgentDef;
   projectInstructions?: string;
 }): string {
   const parts = [config.systemPrompt];
@@ -402,12 +544,12 @@ function buildSystemPrompt(config: {
   // with paths starting at `/`. The env line reports `/workspace` access, so
   // match that key. Historical bug: used `"harness"` (pre-rename, mnemonic/078)
   // which could never match a `/`-prefixed key, silently forcing read-write.
-  const access =
-    typeof config.filesystem === "string" ? config.filesystem : (config.filesystem?.["/workspace"] ?? "read-write");
+  const fs = config.def.filesystem;
+  const access = typeof fs === "string" ? fs : (fs?.["/workspace"] ?? "read-write");
   parts.push(["## Environment", "", `- Workspace: /workspace`, `- Filesystem: ${access}`].join("\n"));
 
-  if (config.instructions) {
-    parts.push(config.instructions);
+  if (config.def.instructions) {
+    parts.push(config.def.instructions);
   }
 
   return parts.join("\n\n");

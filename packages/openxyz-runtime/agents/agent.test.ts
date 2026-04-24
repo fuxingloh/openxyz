@@ -2,11 +2,23 @@ import { describe, expect, test } from "bun:test";
 import type { ModelMessage } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { Agent, hardTruncate, safeBoundary } from "./agent.ts";
-import type { AgentFactory } from "./factory.ts";
+import type { AgentDef, AgentFactory } from "./factory.ts";
 import type { Model } from "../model.ts";
 
 function modelOf(raw: MockLanguageModelV3, systemPrompt = ""): Model {
   return { raw, systemPrompt, limit: { context: 200_000 } };
+}
+
+function defOf(name: string, overrides: Partial<AgentDef> = {}): AgentDef {
+  return {
+    name,
+    description: "",
+    tools: { "*": true },
+    filesystem: "read-write",
+    model: "auto",
+    instructions: "",
+    ...overrides,
+  };
 }
 
 // ---- message builders ---------------------------------------------------
@@ -216,13 +228,11 @@ describe("Agent.generate", () => {
     });
 
     const agent = new Agent({
-      name: "test",
+      def: defOf("test", { filesystem: "read-write" }),
       factory: stubFactory(),
       model: modelOf(model, "you are a test"),
       tools: {},
       skills: [],
-      filesystem: "read-write",
-      instructions: "",
     });
 
     const result = await agent.generate({ prompt: "hi" });
@@ -246,7 +256,7 @@ describe("Agent.generate", () => {
       }),
     });
     const agent = new Agent({
-      name: "compact",
+      def: defOf("compact", { filesystem: "read-only" }),
       // Stub factory that throws if accessed — proves generate() never
       // reaches into compaction paths.
       factory: new Proxy({} as AgentFactory, {
@@ -257,8 +267,6 @@ describe("Agent.generate", () => {
       model: modelOf(model),
       tools: {},
       skills: [],
-      filesystem: "read-only",
-      instructions: "",
     });
     const result = await agent.generate({ prompt: "summarize" });
     expect(result.text).toBe("done");

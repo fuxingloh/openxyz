@@ -21,7 +21,7 @@ const AgentFrontmatterSchema = z.object({
 });
 
 const AgentDefSchema = AgentFrontmatterSchema.extend({
-  content: z.string(),
+  instructions: z.string(),
 });
 
 export type AgentDef = z.infer<typeof AgentDefSchema>;
@@ -53,7 +53,7 @@ function matchGlob(pattern: string, value: string): boolean {
 
 export function parseAgent(name: string, raw: string): AgentDef | undefined {
   const { data, content } = matter(raw);
-  const result = AgentDefSchema.safeParse({ ...data, name, content: content.trim() });
+  const result = AgentDefSchema.safeParse({ ...data, name, instructions: content.trim() });
   if (!result.success) {
     console.warn(
       `[openxyz] agent "${name}" invalid frontmatter: ${result.error.issues.map((i) => i.message).join(", ")}`,
@@ -93,14 +93,12 @@ export class AgentFactory {
     const skills = this.#filterSkills(def);
 
     return new Agent({
-      name,
+      def,
       factory: this,
       model,
       tools,
       skills,
-      filesystem: def.filesystem,
-      instructions: def.content,
-      projectInstructions: this.#runtime.mds?.agents,
+      mds: this.#runtime.mds,
     });
   }
 
