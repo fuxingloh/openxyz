@@ -32,6 +32,11 @@ export type ModelDef = {
   systemPrompt?: string;
   limit?: {
     context?: number;
+    /**
+     * Max input tokens the provider will accept — authoritative compaction
+     * ceiling when set. Preferred over `context − output`. See mnemonic/101.
+     */
+    input?: number;
     /** Max output tokens per response — used for compaction reserve sizing. */
     output?: number;
   };
@@ -66,13 +71,14 @@ export async function loadModel(mod: ModelDef): Promise<Model> {
   const def = mod.default;
   const raw = (typeof def === "function" ? await (def as () => unknown)() : def) as LanguageModel & {
     systemPrompt?: string;
-    limit?: { context?: number; output?: number };
+    limit?: { context?: number; input?: number; output?: number };
   };
   return {
     raw,
     systemPrompt: raw.systemPrompt ?? mod.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     limit: {
       context: raw.limit?.context ?? mod.limit?.context ?? DEFAULT_CONTEXT_TOKENS,
+      input: raw.limit?.input ?? mod.limit?.input,
       output: raw.limit?.output ?? mod.limit?.output,
     },
   };

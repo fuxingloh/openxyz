@@ -7,7 +7,9 @@ import type { BunPlugin } from "bun";
  * covered models; unknown models fall through to the runtime short-TTL
  * cache. See mnemonic/087.
  */
-export function modelsApiPrefetchPlugin(prefetched: Record<string, { context?: number }>): BunPlugin {
+export function modelsApiPrefetchPlugin(
+  prefetched: Record<string, { context?: number; input?: number; output?: number }>,
+): BunPlugin {
   const apiPath = new URL("../../../models/providers/_api.ts", import.meta.url).pathname;
   const literal = JSON.stringify(prefetched);
 

@@ -19,6 +19,14 @@
 
 export type ModelLimit = {
   context?: number;
+  /**
+   * Max input tokens the provider will accept for the prompt. On most
+   * models.dev entries `input === context`; when a provider carves output
+   * space out of the window explicitly, `input < context`. Authoritative
+   * compaction ceiling when present — preferred over `context − output`.
+   * See mnemonic/101.
+   */
+  input?: number;
   output?: number;
 };
 
@@ -129,7 +137,9 @@ export async function prefetchForBuild(openxyzModel: string | undefined): Promis
     const modelId = openxyzModel.slice(sep + 1);
     const entry = data[providerId]?.models?.[modelId]?.limit;
     if (entry && typeof entry.context === "number") {
-      return { [`${providerId}/${modelId}`]: { context: entry.context, output: entry.output } };
+      return {
+        [`${providerId}/${modelId}`]: { context: entry.context, input: entry.input, output: entry.output },
+      };
     }
     return {};
   }
@@ -143,14 +153,14 @@ export async function prefetchForBuild(openxyzModel: string | undefined): Promis
       if (!model.tool_call) continue;
       const ctx = model.limit?.context;
       if (typeof ctx === "number") {
-        out[`${providerId}/${modelId}`] = { context: ctx, output: model.limit?.output };
+        out[`${providerId}/${modelId}`] = { context: ctx, input: model.limit?.input, output: model.limit?.output };
       }
     }
   }
   return out;
 }
 
-type RawEntry = { limit?: { context?: number; output?: number }; tool_call?: boolean };
+type RawEntry = { limit?: { context?: number; input?: number; output?: number }; tool_call?: boolean };
 
 async function fetchApi(): Promise<Record<string, { models?: Record<string, RawEntry> }> | null> {
   try {
@@ -175,7 +185,11 @@ async function liveFetch(): Promise<Registry> {
     if (!provider?.models) continue;
     for (const [modelId, model] of Object.entries(provider.models)) {
       if (typeof model.limit?.context === "number") {
-        out[`${providerId}/${modelId}`] = { context: model.limit.context, output: model.limit.output };
+        out[`${providerId}/${modelId}`] = {
+          context: model.limit.context,
+          input: model.limit.input,
+          output: model.limit.output,
+        };
       }
     }
   }
