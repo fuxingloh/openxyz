@@ -162,35 +162,15 @@ export async function generateEntrypoint(
   body.push(`const db = await getDb(openxyz.cwd);`);
   body.push(`await openxyz.init({ state: new TursoStateAdapter({ client: db }) });`);
   body.push(``);
-  // Node runtime (mnemonic/069 follow-up): `@vercel/functions.waitUntil`
+  // Node runtime (mnemonic/069 resolution): `@vercel/functions.waitUntil`
   // honors the lifetime contract here — the function stays alive until every
   // scheduled promise resolves or `maxDuration` hits. chat-sdk dispatches the
   // agent turn as a background task via `processMessage`; we just hand it
-  // through. The probe stays for one validation deploy to confirm the 45s
-  // log fires, then gets stripped in a follow-up.
+  // through.
   body.push(`export default {`);
   body.push(`  async fetch(request: Request): Promise<Response> {`);
   body.push(`    const { pathname } = new URL(request.url);`);
   body.push(`    console.log(\`[openxyz] fetch \${request.method} \${pathname}\`);`);
-  body.push(`    const __probeStart = Date.now();`);
-  body.push(`    const __ctx = (globalThis as any)[Symbol.for("@vercel/request-context")];`);
-  body.push(`    const __resolved = __ctx?.get?.();`);
-  body.push(
-    `    console.log(\`[probe] ctx-present=\${!!__ctx} has-get=\${typeof __ctx?.get === "function"} resolved=\${!!__resolved} has-waitUntil=\${typeof __resolved?.waitUntil === "function"}\`);`,
-  );
-  body.push(`    const __probeId = Math.random().toString(36).slice(2, 8);`);
-  body.push(`    console.log(\`[probe] \${__probeId} scheduling 45s waitUntil\`);`);
-  body.push(`    try {`);
-  body.push(`      waitUntil(`);
-  body.push(`        new Promise<void>((r) => setTimeout(r, 45_000)).then(() => {`);
-  body.push(
-    `          console.log(\`[probe] \${__probeId} fired at +\${Date.now() - __probeStart}ms (waitUntil is honored)\`);`,
-  );
-  body.push(`        }),`);
-  body.push(`      );`);
-  body.push(`    } catch (err) {`);
-  body.push(`      console.log(\`[probe] \${__probeId} waitUntil threw: \${String(err)}\`);`);
-  body.push(`    }`);
   body.push(`    const match = pathname.match(/^\\/api\\/webhooks\\/([^/]+)\\/?$/);`);
   body.push(`    if (!match) return new Response("not found", { status: 404 });`);
   body.push(`    const handler = openxyz.webhooks[match[1]!];`);
