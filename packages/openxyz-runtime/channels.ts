@@ -36,7 +36,7 @@ export abstract class Channel<Raw = unknown> {
    * Stable content (agent persona, skills index) lives on the agent's
    * `instructions`, not here — the runtime re-calls `system()` every turn.
    */
-  abstract systemMessage(thread: Thread, message: Message<Raw>): Promise<SystemModelMessage>;
+  abstract systemMessage(thread: Thread): Promise<SystemModelMessage>;
 
   /**
    * Convert an incoming platform message into a single `ModelMessage` the
@@ -75,7 +75,7 @@ export abstract class Channel<Raw = unknown> {
    * sharing one assistant memory, etc.) override this and return
    * `new Session(thread, "channel")`. See mnemonic/081.
    */
-  async getSession(thread: Thread, _message: Message<Raw>): Promise<Session> {
+  async getSession(thread: Thread): Promise<Session> {
     return new Session(thread, "thread");
   }
 }

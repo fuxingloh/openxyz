@@ -42,7 +42,7 @@ export class TelegramChannel extends Channel<TelegramRaw> {
     this.adapter = createTelegramAdapter({ ...opts, mode });
   }
 
-  override async getSession(thread: Thread, _message: Message<TelegramRaw>): Promise<Session> {
+  override async getSession(thread: Thread): Promise<Session> {
     // Default `threaded: false` → channel-scoped. Supergroups with forum
     // topics pool every topic into one session, so the assistant keeps a
     // single running memory across the whole group. Flip to `threaded: true`
@@ -62,7 +62,7 @@ export class TelegramChannel extends Channel<TelegramRaw> {
     return result as ModelMessage;
   }
 
-  async systemMessage(thread: Thread, _message: Message<TelegramRaw>): Promise<SystemModelMessage> {
+  async systemMessage(thread: Thread): Promise<SystemModelMessage> {
     return {
       role: "system",
       content: thread.isDM ? `Telegram DM: ${thread.channel.name}` : `Telegram Group: ${thread.channel.name}`,
