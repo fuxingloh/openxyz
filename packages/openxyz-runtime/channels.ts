@@ -1,4 +1,4 @@
-import type { ModelMessage, SystemModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { Thread as ChatSdkThread, Message as ChatSdkMessage, Adapter as ChatSdkAdapter } from "chat";
 
 export type Thread = ChatSdkThread<{
@@ -9,9 +9,9 @@ export type Thread = ChatSdkThread<{
 export type Message<Raw = unknown> = ChatSdkMessage<Raw>;
 
 export type ReplyAction = {
-  /** What agent to route to for this reply. Undefined = do nothing. */
-  agent?: string;
-  /** Whether to add a reaction to the user's message. */
+  /** Whether the channel's `agent` should engage with this message. False stays silent. */
+  reply: boolean;
+  /** Optional reaction emoji to add to the user's message — fires regardless of `reply`. */
   reaction?: string;
 };
 
@@ -26,6 +26,16 @@ export type ReplyAction = {
  */
 export abstract class Channel<Raw = unknown> {
   abstract readonly adapter: ChatSdkAdapter;
+
+  /**
+   * Which agent (by name) handles turns on this channel. Channel-wide,
+   * not per-message — bursts collapse into one agent invocation, so a
+   * per-message agent decision would just create cross-agent leakage in
+   * mixed-author windows. Templates that need different agents for
+   * different audiences should mount a separate channel (or subclass and
+   * override this property in the constructor).
+   */
+  agent: string = "auto";
 
   /**
    * Per-turn system message prepended to the session log before the agent
@@ -52,10 +62,11 @@ export abstract class Channel<Raw = unknown> {
   abstract toModelMessage(thread: Thread, message: Message<Raw>): Promise<ModelMessage>;
 
   /**
-   * Decide what to do with an incoming message. Return `{}` to stay silent;
-   * `{ agent, typing, reaction }` to dispatch to an agent. Templates that
-   * want partial overrides can `return super.reply(thread, message)` after
-   * their own allowlist/gate checks pass.
+   * Decide whether to engage with this incoming message and what reaction
+   * (if any) to ack with. `reply: false` keeps the channel silent for this
+   * message; `reply: true` adds it to the burst the channel's `agent` will
+   * process. Templates with allowlists / gate checks override this and call
+   * `super.reply(thread, message)` once their checks pass.
    */
   abstract reply(thread: Thread, message: Message<Raw>): Promise<ReplyAction>;
 
@@ -218,4 +229,37 @@ function isPrunedStub(output: unknown): boolean {
     typeof (output as { value?: unknown }).value === "string" &&
     /^\[pruned \d+ bytes\b/.test((output as { value: string }).value)
   );
+}
+
+/**
+ * Flatten N user `ModelMessage`s into one. Each source message contributes
+ * its parts to the result's content array, preserving per-message
+ * annotation (Telegram reply_to/forwarded XML, etc.) without N user turns
+ * confusing the model. Non-text parts (files, images) pass through in
+ * arrival order.
+ *
+ * Single-message bursts skip the wrap and pass through unchanged.
+ *
+ * Called by `OpenXyz.onMessage` so the flatten happens at the messaging
+ * layer — `agent.run` receives one already-built turn.
+ */
+export function flattenUserMessage(messages: ModelMessage[]): ModelMessage {
+  if (messages.length === 0) {
+    throw new Error("[openxyz] flattenUserMessage called with empty array");
+  }
+  if (messages.length === 1) return messages[0]!;
+
+  type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
+  const parts: Exclude<UserContent, string> = [];
+  for (const msg of messages) {
+    if (msg.role !== "user") {
+      throw new Error(`[openxyz] flattenUserMessage: expected role "user", got "${msg.role}"`);
+    }
+    if (typeof msg.content === "string") {
+      parts.push({ type: "text", text: msg.content });
+    } else {
+      parts.push(...msg.content);
+    }
+  }
+  return { role: "user", content: parts };
 }

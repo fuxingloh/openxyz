@@ -1,7 +1,7 @@
 import { Chat } from "chat";
-import type { Message as ChatSdkMessage, StateAdapter } from "chat";
-import type { Tool } from "ai";
-import type { Channel, Thread } from "./channels";
+import type { Message as ChatSdkMessage, MessageContext, StateAdapter } from "chat";
+import type { ModelMessage, Tool } from "ai";
+import { flattenUserMessage, type Channel, type Thread } from "./channels";
 import type { Drive } from "./drive";
 import { AgentFactory, type AgentDef } from "./agents/factory";
 import type { Model } from "./model";
@@ -84,60 +84,29 @@ export class OpenXyz {
       // bug like pure `debounce`. Lets the agent respond to "three messages
       // in 1s" as one turn instead of 1 | 2+3. Cost: +1s baseline latency on
       // every DM, including lone messages. Acceptable for an assistant.
-      concurrency: { strategy: "queue-debounce", debounceMs: 1000 },
+      // TODO(?): maybe rename to "coalescing"
+      concurrency: { strategy: "queue-debounce", debounceMs: 500 },
       userName: "openxyz",
       logger: "info",
       fallbackStreamingPlaceholderText: null,
     });
 
-    // chat-sdk dispatch is tiered with early returns (mnemonic/059).
-    // Fan out every incoming-message tier into a single `onMessages` so channel
-    // files own the decision via `action()` regardless of how chat-sdk routed.
-    // Handlers await — serverless invocations run one message at a time, so the
-    // LockError risk from mnemonic/004 (long-running local process with
-    // concurrent messages) doesn't apply. Awaiting keeps the Vercel function
-    // alive through the full onMessages flow instead of getting cut short and
-    // redispatched via Redis.
-    // `onDirectMessage` handler signature is `(thread, message, channel, context)` —
-    // the only tier with a 4-arg shape. The other three are `(thread, message, context)`.
-    chat.onDirectMessage(async (thread, message, _channel, context) => {
-      try {
-        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
-      } catch (err) {
-        console.error("[openxyz] onMessages failed", err);
-      }
-    });
-    chat.onNewMention(async (thread, message, context) => {
-      // First @-mention in an unsubscribed (typically group) thread — subscribe
-      // so follow-ups flow through onSubscribedMessage (mnemonic/050).
-      try {
-        await thread.subscribe();
-      } catch (err) {
-        console.warn("[openxyz] thread.subscribe failed", err);
-      }
-      try {
-        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
-      } catch (err) {
-        console.error("[openxyz] onMessages failed", err);
-      }
-    });
-    chat.onSubscribedMessage(async (thread, message, context) => {
-      try {
-        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
-      } catch (err) {
-        console.error("[openxyz] onMessages failed", err);
-      }
-    });
-    // Catch-all pattern — fires for unsubscribed non-DM non-mention messages
-    // (typically random group chatter). Channel `reply()` decides whether to
-    // engage; returning `{}` stays silent.
-    chat.onNewMessage(/.+/, async (thread, message, context) => {
-      try {
-        await this.onMessages(thread, [...(context?.skipped ?? []), message]);
-      } catch (err) {
-        console.error("[openxyz] onMessages failed", err);
-      }
-    });
+    // chat-sdk dispatch is tiered with early returns (mnemonic/059). Fan
+    // every tier into a single `onMessage` so channel files own the routing
+    // decision via `reply()` regardless of which tier chat-sdk picked.
+    // Handlers await — serverless invocations run one message at a time, so
+    // the LockError risk from mnemonic/004 doesn't apply. Awaiting keeps
+    // the Vercel function alive through the full flow instead of getting
+    // cut short and redispatched via Redis.
+    // `onDirectMessage` is the only 4-arg tier — `(thread, message, channel,
+    // context)`. The other three are `(thread, message, context)`.
+    chat.onDirectMessage((thread, message, _channel, context) => this.onMessage(thread, message, context));
+    chat.onNewMention((thread, message, context) => this.onMessage(thread, message, context));
+    chat.onSubscribedMessage((thread, message, context) => this.onMessage(thread, message, context));
+    // Catch-all — fires for unsubscribed non-DM non-mention messages
+    // (typically random group chatter). `channel.reply()` returning `{}`
+    // stays silent.
+    chat.onNewMessage(/.+/, (thread, message, context) => this.onMessage(thread, message, context));
 
     await chat.initialize();
     this.#chat = chat;
@@ -153,84 +122,94 @@ export class OpenXyz {
   }
 
   /**
-   * Handles a debounce-window batch of messages as one agent turn. The last
-   * element is the triggering message (the one chat-sdk dispatched on);
-   * anything earlier is `context.skipped` from `queue-debounce`, folded into
-   * the same LLM call.
+   * Messaging layer entry point — owns the full path from raw chat-sdk
+   * webhook callback to a single ready-to-run user turn.
    *
-   * `channel.reply()` runs over every message so allowlist / agent-routing
-   * gates apply uniformly — without this, a non-allowlisted author's message
-   * (group chat, mixed debounce window) would ride in on an allowlisted
-   * trigger. The last message's reply drives typing/reaction/agent (it's the
-   * one chat-sdk dispatched on); only messages whose routing resolves to the
-   * same agent are kept (prevents cross-agent leakage, e.g. guest messages
-   * folded into an auto turn).
+   * `message` is the triggering message (the one chat-sdk dispatched on);
+   * `context.skipped` is everything `queue-debounce` (mnemonic/097)
+   * collapsed in the same window. The two are folded together, sorted into
+   * send order, run through `channel.reply()` per message (so allowlist /
+   * agent-routing gates apply uniformly — without this, a non-allowlisted
+   * author's message in a mixed-author burst would ride in on an
+   * allowlisted trigger), then converted to a single merged
+   * `UserModelMessage` via `toModelMessage` + `flattenUserMessage`. The LLM
+   * sees one coherent user turn, not N consecutive user messages.
+   *
+   * Reactions fire per-message; typing fires once on the last reply (the
+   * one chat-sdk dispatched on). Only messages whose routing resolves to
+   * the same agent are kept (prevents cross-agent leakage in mixed-author
+   * windows, e.g. guest messages folded into an `auto` turn — mnemonic/091).
+   *
+   * Hands off to `dispatch` once an agent + merged message are resolved.
+   * Errors are caught + logged here so a thrown handler never reaches
+   * chat-sdk's `processMessage` — keeps log lines clean and prefixed.
    */
-  async onMessages(thread: Thread, messages: ChatSdkMessage[]): Promise<void> {
-    if (messages.length === 0) return;
-
+  async onMessage(thread: Thread, message: ChatSdkMessage, context?: MessageContext): Promise<void> {
     await thread.subscribe();
     const channel = this.runtime.channels[thread.adapter.name];
     if (!channel) {
       throw new Error(`[openxyz] no channel config for adapter "${thread.adapter.name}"`);
     }
 
-    // Burst arrival order is whichever webhook reached Turso's `enqueue`
-    // first — a network race, not the user's send order. Re-sort by
-    // `dateSent` (authoritative platform timestamp), with the numeric tail
-    // of `message.id` as tiebreaker for sub-second bursts where Telegram's
-    // 1s-resolution dateSent ties (Telegram's per-chat message_id is
-    // monotonic). Lexical sort on raw id mis-orders `:9` vs `:14`, hence
-    // the numeric extraction.
-    messages = [...messages].sort((a, b) => {
-      const t = a.metadata.dateSent.getTime() - b.metadata.dateSent.getTime();
-      if (t !== 0) return t;
-      return idTail(a.id) - idTail(b.id);
-    });
+    // Webhook arrival reflects whichever request hit the state-adapter
+    // `enqueue` first — a network race, not the user's send order. Each
+    // channel knows its own platform's send-order semantics (e.g. Telegram
+    // tiebreaks 1s `dateSent` ties on the monotonic per-chat message_id),
+    // so let it sort.
+    const messages = channel.sortMessages([...(context?.skipped ?? []), message]);
 
     const actions = await Promise.all(
-      messages.map(async (message) => ({ message, reply: await channel.reply(thread, message) })),
+      messages.map(async (m) => ({ message: m, reply: await channel.reply(thread, m) })),
     );
-    const last = actions[actions.length - 1]!;
 
-    // Reactions fire per-message — every incoming message with a
-    // `reply.reaction` gets its own emoji on its own message. Fire-and-
-    // forget; a single failed reaction can't block the turn.
-    for (const { message, reply } of actions) {
+    // Reactions fire per-message regardless of `reply` — a template can
+    // ack with `{ reply: false, reaction: "👀" }` to say "I see you, not
+    // engaging." Fire-and-forget; a single failed reaction can't block
+    // the turn.
+    for (const { message: m, reply } of actions) {
       if (!reply.reaction) continue;
       thread.adapter
-        .addReaction(thread.id, message.id, reply.reaction)
+        .addReaction(thread.id, m.id, reply.reaction)
         .catch((err) => console.warn("[openxyz] addReaction failed", err));
     }
 
-    // Typing indicator fires once, keyed off the last reply (the one
-    // chat-sdk actually dispatched on). Multiple `startTyping` calls would
-    // race and flicker the indicator.
-    if (last.reply.typing) {
-      const status = typeof last.reply.typing === "string" ? last.reply.typing : undefined;
-      thread.startTyping(status).catch((err) => console.warn("[openxyz] startTyping failed", err));
-    }
+    const routed = actions.filter((a) => a.reply.reply).map((a) => a.message);
+    if (routed.length === 0) return;
 
-    if (!last.reply.agent) return;
+    // Typing indicator fires once now that we know an agent will run.
+    // Fire-and-forget; a single failed call can't block the turn.
+    thread.startTyping().catch((err) => console.warn("[openxyz] startTyping failed", err));
 
-    // Messages that route to a different agent than the trigger (or to no
-    // agent at all) get dropped here. Happens in mixed-author debounce
-    // windows — e.g. a guest-user message lands alongside an allowlisted
-    // user's trigger (mnemonic/091). Surface it: the dropped message won't
-    // be answered, and the author might wonder why.
-    const routed: ChatSdkMessage[] = [];
-    const dropped: Array<{ message: ChatSdkMessage; agent: string | undefined }> = [];
-    for (const { message, reply } of actions) {
-      if (reply.agent === last.reply.agent) routed.push(message);
-      else dropped.push({ message, agent: reply.agent });
-    }
-    if (dropped.length > 0) {
-      console.warn(
-        `[openxyz] ${dropped.length}/${actions.length} message(s) arrived together but routed to a different agent than the trigger "${last.reply.agent}" — dropping: ${dropped
-          .map(({ message, agent }) => `msg ${message.id} → ${agent ?? "<no agent>"}`)
-          .join(", ")}`,
-      );
-    }
+    // Per-message → UserModelMessage (preserves Telegram reply_to/
+    // forwarded XML annotations, Slack thread refs, etc.) then fold into
+    // ONE turn for the LLM. N consecutive user messages without an
+    // assistant in between read as "user is still typing" to the model
+    // (the `1` `+` `2` `=?` burst gets "want me to save that?" instead of
+    // `3`). Merging here keeps `dispatch` and `agent.run` agnostic of how
+    // the burst was assembled.
+    const userMessages = await Promise.all(routed.map((m) => channel.toModelMessage(thread, m)));
+    const merged = flattenUserMessage(userMessages);
+
+    await this.dispatch({ thread, channel, message: merged });
+  }
+
+  /**
+   * Agentic layer — pure agent invocation wrapped by drive lifecycle. No
+   * platform-side acks, no routing decisions; everything messaging is
+   * already settled by `onMessage`. The agent name comes from `channel.agent`.
+   *
+   * Drive `refresh` happens before the agent runs; `commit` happens after.
+   * `commit` always runs even if the agent errored — `agent.run` catches
+   * its own failures and surfaces them as a fallback `thread.post`, so
+   * we don't lose drive writes to a stack-unwind.
+   */
+  async dispatch(input: {
+    channel: Channel;
+    thread: Thread;
+    /** The merged user turn — already folded from the burst by `onMessage`. */
+    message: ModelMessage;
+  }): Promise<void> {
+    const { thread, channel, message } = input;
 
     // Pre-turn refresh — drives sync down remote state (git pull, etc.)
     // before the agent runs. Failures mean the drive is stale; the agent
@@ -251,13 +230,15 @@ export class OpenXyz {
       }
     }
 
-    const agent = await this.agentFactory.create(last.reply.agent);
+    const agent = await this.agentFactory.create(channel.agent);
     // Agent owns the turn from here: channel resolution (systemMessage +
-    // toModelMessage + getSession in parallel), session.append(user),
-    // between-turn compaction, stream, per-step session persistence,
-    // mid-turn prompt compaction, and thread.post. Errors are caught inside
-    // and surfaced as a fallback post, so drive.commit below always runs.
-    await agent.run({ channel, thread, messages: routed });
+    // getSession in parallel), session.append(merged user turn), between-
+    // turn compaction, stream, per-step session persistence, mid-turn
+    // prompt compaction, and thread.post. The user message has already
+    // been built + merged by `#dispatch`.
+    // Errors are caught inside and surfaced as a fallback post, so
+    // drive.commit below always runs.
+    await agent.run({ channel, thread, message });
 
     // Post-turn commit — writable drives flush edits (git commit + push, etc.)
     // Unlike `refresh`, `commit` failures ARE user-facing: edits didn't make
@@ -285,16 +266,4 @@ export class OpenXyz {
       await Promise.allSettled(cleanup.map((fn) => fn()));
     }
   }
-}
-
-/**
- * Extract the trailing numeric segment of a platform message id for sorting.
- * Telegram ids look like `7601560926:14`; the suffix is monotonic per chat.
- * Falls back to `0` when no numeric tail is present so the sort stays stable
- * for adapters with non-numeric ids (those should already be tied on
- * `dateSent` or sourced from a single in-order webhook).
- */
-function idTail(id: string): number {
-  const m = id.match(/(\d+)$/);
-  return m ? Number(m[1]) : 0;
 }
