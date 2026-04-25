@@ -179,8 +179,8 @@ export class OpenXyz {
         .catch((err) => console.warn("[openxyz] addReaction failed", err));
     }
 
-    const routed = actions.filter((a) => a.reply).map((a) => a.message);
-    if (routed.length === 0) return;
+    const filtered = actions.filter((a) => a.reply).map((a) => a.message);
+    if (filtered.length === 0) return;
 
     // Typing indicator fires once now that we know an agent will run.
     // Fire-and-forget; a single failed call can't block the turn.
@@ -190,7 +190,7 @@ export class OpenXyz {
     // XML annotations, Slack thread refs, etc.). The result flows through
     // unchanged — `agent.run` appends to the session in order and hands the
     // full prompt to the LLM.
-    const messages = await channel.toModelMessages(thread, routed);
+    const messages = await channel.toModelMessages(thread, filtered);
 
     await this.dispatch({ thread, channel, messages });
   }
