@@ -175,6 +175,19 @@ export class OpenXyz {
       throw new Error(`[openxyz] no channel config for adapter "${thread.adapter.name}"`);
     }
 
+    // Burst arrival order is whichever webhook reached Turso's `enqueue`
+    // first — a network race, not the user's send order. Re-sort by
+    // `dateSent` (authoritative platform timestamp), with the numeric tail
+    // of `message.id` as tiebreaker for sub-second bursts where Telegram's
+    // 1s-resolution dateSent ties (Telegram's per-chat message_id is
+    // monotonic). Lexical sort on raw id mis-orders `:9` vs `:14`, hence
+    // the numeric extraction.
+    messages = [...messages].sort((a, b) => {
+      const t = a.metadata.dateSent.getTime() - b.metadata.dateSent.getTime();
+      if (t !== 0) return t;
+      return idTail(a.id) - idTail(b.id);
+    });
+
     const actions = await Promise.all(
       messages.map(async (message) => ({ message, reply: await channel.reply(thread, message) })),
     );
@@ -272,4 +285,16 @@ export class OpenXyz {
       await Promise.allSettled(cleanup.map((fn) => fn()));
     }
   }
+}
+
+/**
+ * Extract the trailing numeric segment of a platform message id for sorting.
+ * Telegram ids look like `7601560926:14`; the suffix is monotonic per chat.
+ * Falls back to `0` when no numeric tail is present so the sort stays stable
+ * for adapters with non-numeric ids (those should already be tied on
+ * `dateSent` or sourced from a single in-order webhook).
+ */
+function idTail(id: string): number {
+  const m = id.match(/(\d+)$/);
+  return m ? Number(m[1]) : 0;
 }
