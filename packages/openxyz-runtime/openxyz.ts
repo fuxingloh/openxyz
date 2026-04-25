@@ -1,7 +1,7 @@
 import { Chat } from "chat";
 import type { Message as ChatSdkMessage, MessageContext, StateAdapter } from "chat";
 import type { ModelMessage, Tool } from "ai";
-import { flattenUserMessage, type Channel, type Thread } from "./channels";
+import { type Channel, type Thread } from "./channels";
 import type { Drive } from "./drive";
 import { AgentFactory, type AgentDef } from "./agents/factory";
 import type { Model } from "./model";
@@ -131,16 +131,16 @@ export class OpenXyz {
    * send order, run through `channel.reply()` per message (so allowlist /
    * agent-routing gates apply uniformly — without this, a non-allowlisted
    * author's message in a mixed-author burst would ride in on an
-   * allowlisted trigger), then converted to a single merged
-   * `UserModelMessage` via `toModelMessage` + `flattenUserMessage`. The LLM
-   * sees one coherent user turn, not N consecutive user messages.
+   * allowlisted trigger), then converted to N `ModelMessage`s via
+   * `toModelMessages` and passed downstream as an array. Each platform message
+   * keeps its own annotations (Telegram reply_to/forwarded XML, etc.).
    *
    * Reactions fire per-message; typing fires once on the last reply (the
    * one chat-sdk dispatched on). Only messages whose routing resolves to
    * the same agent are kept (prevents cross-agent leakage in mixed-author
    * windows, e.g. guest messages folded into an `auto` turn — mnemonic/091).
    *
-   * Hands off to `dispatch` once an agent + merged message are resolved.
+   * Hands off to `dispatch` once an agent + messages are resolved.
    * Errors are caught + logged here so a thrown handler never reaches
    * chat-sdk's `processMessage` — keeps log lines clean and prefixed.
    */
@@ -156,10 +156,10 @@ export class OpenXyz {
     // channel knows its own platform's send-order semantics (e.g. Telegram
     // tiebreaks 1s `dateSent` ties on the monotonic per-chat message_id),
     // so let it sort.
-    const messages = channel.sortMessages([...(context?.skipped ?? []), message]);
+    const incoming = channel.sortMessages([...(context?.skipped ?? []), message]);
 
     const actions = await Promise.all(
-      messages.map(async (m) => ({ message: m, reply: await channel.reply(thread, m) })),
+      incoming.map(async (m) => ({ message: m, reply: await channel.reply(thread, m) })),
     );
 
     // Reactions fire per-message regardless of `reply` — a template can
@@ -180,17 +180,13 @@ export class OpenXyz {
     // Fire-and-forget; a single failed call can't block the turn.
     thread.startTyping().catch((err) => console.warn("[openxyz] startTyping failed", err));
 
-    // Per-message → UserModelMessage (preserves Telegram reply_to/
-    // forwarded XML annotations, Slack thread refs, etc.) then fold into
-    // ONE turn for the LLM. N consecutive user messages without an
-    // assistant in between read as "user is still typing" to the model
-    // (the `1` `+` `2` `=?` burst gets "want me to save that?" instead of
-    // `3`). Merging here keeps `dispatch` and `agent.run` agnostic of how
-    // the burst was assembled.
-    const userMessages = await Promise.all(routed.map((m) => channel.toModelMessage(thread, m)));
-    const merged = flattenUserMessage(userMessages);
+    // Burst → ModelMessage[] (channel preserves Telegram reply_to/forwarded
+    // XML annotations, Slack thread refs, etc.). The result flows through
+    // unchanged — `agent.run` appends to the session in order and hands the
+    // full prompt to the LLM.
+    const messages = await channel.toModelMessages(thread, routed);
 
-    await this.dispatch({ thread, channel, message: merged });
+    await this.dispatch({ thread, channel, messages });
   }
 
   /**
@@ -203,13 +199,8 @@ export class OpenXyz {
    * its own failures and surfaces them as a fallback `thread.post`, so
    * we don't lose drive writes to a stack-unwind.
    */
-  async dispatch(input: {
-    channel: Channel;
-    thread: Thread;
-    /** The merged user turn — already folded from the burst by `onMessage`. */
-    message: ModelMessage;
-  }): Promise<void> {
-    const { thread, channel, message } = input;
+  async dispatch(input: { channel: Channel; thread: Thread; messages: ModelMessage[] }): Promise<void> {
+    const { thread, channel, messages } = input;
 
     // Pre-turn refresh — drives sync down remote state (git pull, etc.)
     // before the agent runs. Failures mean the drive is stale; the agent
@@ -238,7 +229,7 @@ export class OpenXyz {
     // been built + merged by `#dispatch`.
     // Errors are caught inside and surfaced as a fallback post, so
     // drive.commit below always runs.
-    await agent.run({ channel, thread, message });
+    await agent.run({ channel, thread, messages });
 
     // Post-turn commit — writable drives flush edits (git commit + push, etc.)
     // Unlike `refresh`, `commit` failures ARE user-facing: edits didn't make

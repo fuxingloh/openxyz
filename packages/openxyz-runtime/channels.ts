@@ -1,4 +1,4 @@
-import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Thread as ChatSdkThread, Message as ChatSdkMessage, Adapter as ChatSdkAdapter } from "chat";
 
 export type Thread = ChatSdkThread<{
@@ -47,19 +47,21 @@ export abstract class Channel<Raw = unknown> {
   abstract getSystemMessage(thread: Thread): Promise<SystemModelMessage>;
 
   /**
-   * Convert an incoming platform message into a single `ModelMessage` the
-   * runtime appends to the session before each agent turn. History is not
-   * the channel's concern — that lives in the session (mnemonic/081 — two-
-   * ledger split).
+   * Convert a burst of incoming platform messages into the `ModelMessage`s
+   * the runtime appends to the session before each agent turn. History is
+   * not the channel's concern — that lives in the session (mnemonic/081 —
+   * two-ledger split).
    *
    * Abstract on purpose. Each platform carries different metadata worth
    * surfacing to the agent (Telegram reply/forward XML, Slack thread refs,
    * Discord replies-as-embeds, terminal file attachments, …) — a shared
    * default would lie about at least one of them. Concrete adapters call
-   * chat-sdk's `toAiMessages([message], { transformMessage })` with the
-   * annotation their platform needs.
+   * chat-sdk's `toAiMessages(messages, { transformMessage })` with the
+   * annotation their platform needs. Returning N messages keeps each
+   * platform message addressable; the runtime forwards the array to the
+   * LLM in arrival order.
    */
-  abstract toModelMessage(thread: Thread, message: Message<Raw>): Promise<ModelMessage>;
+  abstract toModelMessages(thread: Thread, messages: Message<Raw>[]): Promise<ModelMessage[]>;
 
   /**
    * Decide whether to engage with this incoming message and what reaction
@@ -229,37 +231,4 @@ function isPrunedStub(output: unknown): boolean {
     typeof (output as { value?: unknown }).value === "string" &&
     /^\[pruned \d+ bytes\b/.test((output as { value: string }).value)
   );
-}
-
-/**
- * Flatten N user `ModelMessage`s into one. Each source message contributes
- * its parts to the result's content array, preserving per-message
- * annotation (Telegram reply_to/forwarded XML, etc.) without N user turns
- * confusing the model. Non-text parts (files, images) pass through in
- * arrival order.
- *
- * Single-message bursts skip the wrap and pass through unchanged.
- *
- * Called by `OpenXyz.onMessage` so the flatten happens at the messaging
- * layer — `agent.run` receives one already-built turn.
- */
-export function flattenUserMessage(messages: ModelMessage[]): ModelMessage {
-  if (messages.length === 0) {
-    throw new Error("[openxyz] flattenUserMessage called with empty array");
-  }
-  if (messages.length === 1) return messages[0]!;
-
-  type UserContent = Extract<ModelMessage, { role: "user" }>["content"];
-  const parts: Exclude<UserContent, string> = [];
-  for (const msg of messages) {
-    if (msg.role !== "user") {
-      throw new Error(`[openxyz] flattenUserMessage: expected role "user", got "${msg.role}"`);
-    }
-    if (typeof msg.content === "string") {
-      parts.push({ type: "text", text: msg.content });
-    } else {
-      parts.push(...msg.content);
-    }
-  }
-  return { role: "user", content: parts };
 }

@@ -299,20 +299,20 @@ export class Agent {
    *   fallback thread post so the caller (`OpenXyz.dispatch`) can still
    *   run drive.commit after `run()` returns.
    *
-   * `message` is the merged user turn — `OpenXyz.onMessage` already folded
-   * the burst from `queue-debounce` (mnemonic/097) into a single
-   * `UserModelMessage` via `mergeUserMessages`, preserving per-platform-
-   * message annotation as content blocks.
+   * `messages` is the user turn — `OpenXyz.onMessage` ran the
+   * `queue-debounce` (mnemonic/097) burst through `channel.toModelMessages`
+   * and passes the array through. Per-platform-message annotation stays on
+   * each entry; the LLM sees N consecutive user messages.
    */
-  async run(input: { channel: Channel; thread: Thread; message: ModelMessage }): Promise<void> {
-    const { channel, thread, message } = input;
+  async run(input: { channel: Channel; thread: Thread; messages: ModelMessage[] }): Promise<void> {
+    const { channel, thread, messages } = input;
 
     // Channel decides session scope (thread-scoped by default, channel-
     // scoped for Telegram groups, etc.). History lives in session, not the
     // chat-sdk thread (mnemonic/081).
     const [system, session] = await Promise.all([channel.getSystemMessage(thread), channel.getSession(thread)]);
 
-    await session.append([message]);
+    await session.append(messages);
     // TODO(?): move this to Session.compact() <- doesn't care will just run context
     //   then here is if (input > input limits) { then compact }
     await this.#compactSession(session, thread);
