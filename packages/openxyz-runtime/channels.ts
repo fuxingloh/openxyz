@@ -78,6 +78,23 @@ export abstract class Channel<Raw = unknown> {
   async getSession(thread: Thread): Promise<Session> {
     return new Session(thread, "thread");
   }
+
+  /**
+   * Reorder a debounce-window burst into the user's send order. Webhook
+   * arrival at the state-adapter `enqueue` reflects whichever request hit
+   * the database first — a network race, not what the user typed when.
+   *
+   * Default sorts by `metadata.dateSent` ascending, which is correct for
+   * platforms with sub-second send timestamps (Slack `ts`, Discord
+   * snowflakes via `dateSent`). Platforms with coarser timestamps
+   * (Telegram is 1s-resolution) should override and add a tiebreaker —
+   * usually a monotonic per-chat message id.
+   *
+   * Returns a new array; never mutates the input.
+   */
+  sortMessages(messages: Message<Raw>[]): Message<Raw>[] {
+    return [...messages].sort((a, b) => a.metadata.dateSent.getTime() - b.metadata.dateSent.getTime());
+  }
 }
 
 export type MessageFilter<Raw = unknown> = (message: Message<Raw>, thread: Thread) => boolean;

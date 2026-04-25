@@ -70,6 +70,22 @@ export class TelegramChannel extends Channel<TelegramRaw> {
   }
 
   /**
+   * Telegram's `dateSent` is 1s-resolution (Bot API delivers Unix seconds),
+   * so a forwarded burst typically ties on timestamp. The per-chat
+   * `message_id` (numeric tail of `chat:msgid` like `7601560926:14`) is
+   * monotonic and authoritative for send order — extract and use as
+   * tiebreaker. Lexical id sort would mis-order `:9` vs `:14`, hence the
+   * numeric extraction.
+   */
+  override sortMessages(messages: Message<TelegramRaw>[]): Message<TelegramRaw>[] {
+    return [...messages].sort((a, b) => {
+      const t = a.metadata.dateSent.getTime() - b.metadata.dateSent.getTime();
+      if (t !== 0) return t;
+      return idTail(a.id) - idTail(b.id);
+    });
+  }
+
+  /**
    * Default dispatch: respond to DMs, respond in groups only when @-mentioned
    * or replied-to. Templates with allowlists typically check the allowlist
    * first and then `return super.reply(thread, message)` to reuse this.
@@ -124,6 +140,17 @@ type TelegramForwardOrigin =
   | { type: "hidden_user"; sender_user_name: string }
   | { type: "chat"; sender_chat: TelegramChat; author_signature?: string }
   | { type: "channel"; chat: TelegramChat; message_id: number; author_signature?: string };
+
+/**
+ * Extract the trailing numeric segment of a Telegram message id for the
+ * burst-sort tiebreaker. Ids look like `7601560926:14`; the suffix is the
+ * per-chat `message_id` and is monotonic. Falls back to `0` for any id that
+ * doesn't end in digits — in practice every Telegram id does.
+ */
+function idTail(id: string): number {
+  const m = id.match(/(\d+)$/);
+  return m ? Number(m[1]) : 0;
+}
 
 function annotate(aiMsg: AiMessage, src: Message, botUserId: string | undefined): AiMessage {
   const raw = src.raw as TelegramRaw | undefined;
