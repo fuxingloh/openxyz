@@ -44,7 +44,7 @@ export async function buildVercel(cwd: string): Promise<void> {
     entrypoints: [entrypoint],
     outdir: funcDir,
     naming: "server.js",
-    target: "bun",
+    target: "node",
     format: "esm",
     sourcemap: "linked",
     define: {
