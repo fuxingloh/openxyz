@@ -91,11 +91,11 @@ export class TelegramChannel extends Channel<TelegramRaw> {
    * first and then `return super.reply(thread, message)` to reuse this.
    */
   async reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
-    if (thread.isDM) return { agent: "auto" };
+    if (thread.isDM) return { reply: true };
     if (message.isMention || isReplyToBot(thread, message)) {
-      return { agent: "auto", reaction: "👀" };
+      return { reply: true, reaction: "👀" };
     }
-    return {};
+    return { reply: false };
   }
 }
 
