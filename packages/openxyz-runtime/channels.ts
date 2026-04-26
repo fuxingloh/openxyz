@@ -9,8 +9,25 @@ export type Thread = ChatSdkThread<{
 export type Message<Raw = unknown> = ChatSdkMessage<Raw>;
 
 export type ReplyAction = {
-  /** Whether the channel's `agent` should engage with this message. False stays silent. */
+  /**
+   * Whether the channel's `agent` should engage with this message. `true`
+   * triggers an agent turn; `false` stays silent. This is a TRIGGER signal —
+   * an allowlist of who can address the bot — not a context filter. Group
+   * chatter in lurk-mode channels is `reply: false` (don't speak) but should
+   * still flow into the agent's view when the bot is later addressed; that
+   * lives on `context`.
+   */
   reply: boolean;
+  /**
+   * Whether this message should be included in the agent's view when an
+   * agent turn runs. Defaults to `true` — `reply: true` requires it, and
+   * `reply: false` typically still wants the message visible (group chatter
+   * the bot should overhear so it has antecedents when later @-mentioned).
+   * Set to `false` to hard-exclude — e.g. messages from non-allowlisted
+   * authors in mixed-author bursts (mnemonic/091) where another agent owns
+   * the message and we don't want it leaking into this turn's prompt.
+   */
+  context?: boolean;
   /** Optional reaction emoji to add to the user's message — fires regardless of `reply`. */
   reaction?: string;
 };
@@ -106,7 +123,68 @@ export abstract class Channel<Raw = unknown> {
   sortMessages(messages: Message<Raw>[]): Message<Raw>[] {
     return [...messages].sort((a, b) => a.metadata.dateSent.getTime() - b.metadata.dateSent.getTime());
   }
+
+  /**
+   * Prior context the agent should see alongside the current burst
+   * (mnemonic/106). Returns recent messages that arrived in this thread but
+   * never made it into a triggered turn — typical case: user types "the
+   * deploy is failing" + "see logs" + "@bot fix that"; only the @-mention
+   * fires a tier handler, the first two never get appended to the session,
+   * agent sees "fix that" with no antecedent.
+   *
+   * Default: walk `thread.recentMessages` newest → oldest, skip ids already
+   * in `incoming` (the current burst — already in the prompt path), stop at
+   * the first message authored by this bot (`author.isMe`) or at
+   * `RECENT_MESSAGES_CAP`. Each candidate runs through `this.reply()` and is
+   * dropped if the policy returns `context: false` — so the same allowlist /
+   * permission logic that gated the message originally still applies on
+   * cache-walk (mnemonic/091). Refreshes once if the cache is empty (cold
+   * start). Returns chronological order.
+   *
+   * `reply()` must be a pure policy decision (no side effects) — backfill
+   * re-invokes it on historical messages. Tight cap and bot-cut keep the
+   * prompt-inject surface small. Override to tighten (DM no-op,
+   * same-author only) or widen. Override returning `[]` opts out entirely.
+   */
+  async recentMessages(thread: Thread, incoming: Message<Raw>[]): Promise<Message<Raw>[]> {
+    if (incoming.length === 0) return [];
+
+    let recent = thread.recentMessages as Message<Raw>[];
+    if (recent.length === 0) {
+      await thread.refresh().catch((err) => console.warn("[openxyz] thread.refresh failed during recentMessages", err));
+      recent = thread.recentMessages as Message<Raw>[];
+    }
+    if (recent.length === 0) return [];
+
+    const incomingIds = new Set(incoming.map((m) => m.id));
+    const candidates: Message<Raw>[] = [];
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const m = recent[i]!;
+      if (incomingIds.has(m.id)) continue;
+      if (m.author.isMe) break;
+      candidates.push(m);
+      if (candidates.length >= RECENT_MESSAGES_CAP) break;
+    }
+
+    // Apply the same `reply()` policy that gates fresh messages — `context:
+    // false` excludes a candidate from the prompt (allowlist / guest-message
+    // gating, mnemonic/091). `reply: true` and the default both flow through.
+    const decisions = await Promise.all(
+      candidates.map(async (m) => ({ message: m, action: await this.reply(thread, m) })),
+    );
+    const included = decisions.filter((d) => d.action.context !== false).map((d) => d.message);
+
+    return included.reverse();
+  }
 }
+
+/**
+ * Cap on `Channel.recentMessages` results — messages older than the burst,
+ * since the bot last spoke. Tight by design (mnemonic/106): false-include
+ * is a prompt-inject vector in busy groups, false-omit recreates the bug
+ * we're fixing. Start at 10; widen if real traffic shows the cap is biting.
+ */
+const RECENT_MESSAGES_CAP = 10;
 
 export type MessageFilter<Raw = unknown> = (message: Message<Raw>, thread: Thread) => boolean;
 

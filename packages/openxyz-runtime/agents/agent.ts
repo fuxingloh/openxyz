@@ -338,15 +338,13 @@ export class Agent {
       // Split on `finish-step` so each LLM step renders as its own chat
       // bubble (mnemonic/104) — the natural rhythm of "ack → tool → result"
       // becomes visible burst-text instead of one growing message. Re-fire
-      // the typing indicator before each bubble: chat-sdk's initial
-      // startTyping (from the dispatcher) decays during tool latency
-      // (Telegram's sendChatAction expires ~5s, mnemonic/100), and by the
-      // time the next text-emitting step arrives the recipient sees
-      // nothing. One ping per bubble keeps the "…typing" alive across the
-      // whole turn without needing a heartbeat.
+      // the typing indicator after each bubble to cover the next step's
+      // tool-execution gap — Telegram's sendChatAction expires ~5s
+      // (mnemonic/100), and without a heartbeat the recipient sees nothing
+      // while tools run between text-emitting steps.
       for await (const subStream of splitOnFinishStep(result.fullStream)) {
-        await thread.startTyping().catch(() => {});
         await thread.post(subStream);
+        await thread.startTyping().catch(() => {});
       }
       const response = await result.response;
       await session.append(response.messages as ModelMessage[]);

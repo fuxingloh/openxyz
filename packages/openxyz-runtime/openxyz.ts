@@ -88,7 +88,7 @@ export class OpenXyz {
       concurrency: { strategy: "queue-debounce", debounceMs: 500 },
       userName: "openxyz",
       logger: "info",
-      fallbackStreamingPlaceholderText: "…",
+      fallbackStreamingPlaceholderText: null,
     });
 
     // chat-sdk dispatch is tiered with early returns (mnemonic/059). Fan
@@ -163,6 +163,7 @@ export class OpenXyz {
         return {
           message: message,
           reply: action.reply,
+          context: action.context,
           reaction: action.reaction,
         };
       }),
@@ -179,18 +180,38 @@ export class OpenXyz {
         .catch((err) => console.warn("[openxyz] addReaction failed", err));
     }
 
-    const filtered = actions.filter((a) => a.reply).map((a) => a.message);
-    if (filtered.length === 0) return;
+    // `reply` is the trigger signal — does this message cause an agent turn?
+    // No reply=true messages → nobody asked the bot to engage, stay silent.
+    if (!actions.some((a) => a.reply)) return;
 
     // Typing indicator fires once now that we know an agent will run.
     // Fire-and-forget; a single failed call can't block the turn.
     thread.startTyping().catch((err) => console.warn("[openxyz] startTyping failed", err));
 
+    // `context` is the visibility signal — separate from `reply`. Defaults to
+    // `true` so group chatter the bot is overhearing flows into the prompt
+    // when it later gets @-mentioned. `reply: true` always implies context;
+    // templates set `context: false` only for hard exclusion (allowlist
+    // gating, mnemonic/091).
+    const burst = actions.filter((a) => a.reply || a.context !== false).map((a) => a.message);
+
+    // Prior-context backfill (mnemonic/106). The burst above only covers
+    // messages that arrived inside the queue-debounce window — earlier user
+    // messages that fired tier handlers but returned `reply: false` never
+    // made it into the session. `channel.recentMessages` walks
+    // `thread.recentMessages` back to the bot's last reply and re-applies
+    // `reply()`'s `context` policy, prepending the antecedents that should
+    // be visible. Fail-open.
+    const prior = await channel.recentMessages(thread, incoming).catch((err) => {
+      console.warn("[openxyz] channel.recentMessages failed", err);
+      return [];
+    });
+
     // Burst → ModelMessage[] (channel preserves Telegram reply_to/forwarded
     // XML annotations, Slack thread refs, etc.). The result flows through
     // unchanged — `agent.run` appends to the session in order and hands the
     // full prompt to the LLM.
-    const messages = await channel.toModelMessages(thread, filtered);
+    const messages = await channel.toModelMessages(thread, [...prior, ...burst]);
 
     await this.dispatch({ thread, channel, messages });
   }

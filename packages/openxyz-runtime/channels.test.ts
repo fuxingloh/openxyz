@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelMessage } from "ai";
-import { estimateTokens, Session, type Thread } from "./channels.ts";
+import type { ModelMessage, SystemModelMessage } from "ai";
+import type { Adapter as ChatSdkAdapter, Message as ChatSdkMessage } from "chat";
+import { Channel, estimateTokens, Session, type Message, type ReplyAction, type Thread } from "./channels.ts";
 
 type StateStore = { session?: ModelMessage[] } | null;
 
@@ -279,6 +280,158 @@ describe("Session.replace", () => {
     const out = ((await session.messages())[0] as { content: Array<{ output: { value: string } }> }).content[0]!.output
       .value;
     expect(out).toBe("X".repeat(1_000));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Channel.recentMessages — prior-context backfill (mnemonic/106)
+// ───────────────────────────────────────────────────────────────────────────
+
+class TestChannel extends Channel<unknown> {
+  readonly adapter = {} as ChatSdkAdapter;
+  // Per-author policy — `excluded` user ids return `context: false`.
+  constructor(private readonly excluded: Set<string> = new Set()) {
+    super();
+  }
+  async getSystemMessage(): Promise<SystemModelMessage> {
+    return { role: "system", content: "" };
+  }
+  async toModelMessages(_thread: Thread, _messages: Message[]): Promise<ModelMessage[]> {
+    return [];
+  }
+  async reply(_thread: Thread, message: Message): Promise<ReplyAction> {
+    if (this.excluded.has(message.author.userId)) return { reply: false, context: false };
+    return { reply: false };
+  }
+}
+
+function chatMsg(opts: { id: string; isMe: boolean; dateSent?: number; text?: string }): Message {
+  return {
+    id: opts.id,
+    raw: undefined,
+    threadId: "t",
+    metadata: { dateSent: new Date(opts.dateSent ?? 0), edited: false },
+    author: { fullName: opts.isMe ? "bot" : "user", isBot: opts.isMe, isMe: opts.isMe, userId: opts.id, userName: "x" },
+    content: opts.text ?? opts.id,
+  } as unknown as Message;
+}
+
+function makeThreadWithRecent(recent: Message[]): Thread {
+  let refreshes = 0;
+  const thread = {
+    id: "t",
+    recentMessages: recent,
+    refresh: async () => {
+      refreshes++;
+    },
+    get _refreshes() {
+      return refreshes;
+    },
+  };
+  return thread as unknown as Thread;
+}
+
+describe("Channel.backfill", () => {
+  test("returns empty when incoming is empty", async () => {
+    const ch = new TestChannel();
+    const thread = makeThreadWithRecent([chatMsg({ id: "m1", isMe: false })]);
+    expect(await ch.recentMessages(thread, [])).toEqual([]);
+  });
+
+  test("returns empty when recent cache is empty (after one refresh)", async () => {
+    const ch = new TestChannel();
+    const thread = makeThreadWithRecent([]);
+    const res = await ch.recentMessages(thread, [chatMsg({ id: "trigger", isMe: false })]);
+    expect(res).toEqual([]);
+    // refresh was attempted exactly once
+    expect((thread as unknown as { _refreshes: number })._refreshes).toBe(1);
+  });
+
+  test("walks back to last bot message and stops there", async () => {
+    // recent (chronological): bot1 — u1 — u2 — bot2 — u3 — u4 (incoming)
+    const recent = [
+      chatMsg({ id: "bot1", isMe: true, dateSent: 1 }),
+      chatMsg({ id: "u1", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 3 }),
+      chatMsg({ id: "bot2", isMe: true, dateSent: 4 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 5 }),
+      chatMsg({ id: "u4", isMe: false, dateSent: 6 }),
+    ];
+    const incoming = [chatMsg({ id: "u4", isMe: false, dateSent: 6 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), incoming);
+    expect(res.map((m) => m.id)).toEqual(["u3"]);
+  });
+
+  test("excludes burst messages even when present in recent cache", async () => {
+    // u3 + u4 are the burst (incoming); recent already contains them.
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 3 }),
+      chatMsg({ id: "u4", isMe: false, dateSent: 4 }),
+    ];
+    const incoming = [chatMsg({ id: "u3", isMe: false }), chatMsg({ id: "u4", isMe: false })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), incoming);
+    expect(res.map((m) => m.id)).toEqual(["u1", "u2"]);
+  });
+
+  test("caps at BACKFILL_CAP (10) when no bot message found", async () => {
+    const recent = Array.from({ length: 50 }, (_, i) => chatMsg({ id: `u${i}`, isMe: false, dateSent: i }));
+    const incoming = [chatMsg({ id: "u49", isMe: false, dateSent: 49 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), incoming);
+    expect(res.length).toBe(10);
+    // Newest 10 (excluding the trigger u49): u39..u48
+    expect(res[0]?.id).toBe("u39");
+    expect(res[res.length - 1]?.id).toBe("u48");
+  });
+
+  test("returns chronological order (oldest first)", async () => {
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 3 }),
+      chatMsg({ id: "trigger", isMe: false, dateSent: 4 }),
+    ];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), [chatMsg({ id: "trigger", isMe: false })]);
+    expect(res.map((m) => m.id)).toEqual(["u1", "u2", "u3"]);
+  });
+
+  test("returns empty when bot is the only message before the burst", async () => {
+    const recent = [
+      chatMsg({ id: "bot1", isMe: true, dateSent: 1 }),
+      chatMsg({ id: "trigger", isMe: false, dateSent: 2 }),
+    ];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), [chatMsg({ id: "trigger", isMe: false })]);
+    expect(res).toEqual([]);
+  });
+
+  test("excludes candidates whose reply() returned context: false (allowlist gating)", async () => {
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "guest", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 3 }),
+      chatMsg({ id: "trigger", isMe: false, dateSent: 4 }),
+    ];
+    const ch = new TestChannel(new Set(["guest"]));
+    const res = await ch.recentMessages(makeThreadWithRecent(recent), [chatMsg({ id: "trigger", isMe: false })]);
+    expect(res.map((m) => m.id)).toEqual(["u1", "u3"]);
+  });
+
+  test("fail-open if refresh throws — returns empty without throwing", async () => {
+    const thread = {
+      id: "t",
+      recentMessages: [] as ChatSdkMessage[],
+      refresh: async () => {
+        throw new Error("boom");
+      },
+    } as unknown as Thread;
+    const ch = new TestChannel();
+    expect(await ch.recentMessages(thread, [chatMsg({ id: "trigger", isMe: false })])).toEqual([]);
   });
 });
 
