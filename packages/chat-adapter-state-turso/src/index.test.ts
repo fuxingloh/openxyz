@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Lock, Logger } from "chat";
 import { connect, type Database } from "@tursodatabase/database";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { TursoStateAdapter } from "./index";
 
 const mockLogger: Logger = {
@@ -299,6 +299,55 @@ describe("TursoStateAdapter", () => {
 
       it("returns empty for unknown keys", async () => {
         expect(await adapter.getList("nope")).toEqual([]);
+      });
+    });
+
+    describe("statement cache", () => {
+      it("prepares each SQL string at most once across repeated calls", async () => {
+        const spy = spyOn(db, "prepare");
+        await adapter.set("k", "v1");
+        await adapter.set("k", "v2");
+        await adapter.set("k", "v3");
+        const insertCalls = spy.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO chat_state_cache"));
+        expect(insertCalls.length).toBe(1);
+        spy.mockRestore();
+      });
+
+      it("collapses concurrent first-uses of the same SQL into one prepare", async () => {
+        const spy = spyOn(db, "prepare");
+        await Promise.all([adapter.subscribe("t1"), adapter.subscribe("t2"), adapter.subscribe("t3")]);
+        const subscribeCalls = spy.mock.calls.filter(([sql]) =>
+          String(sql).includes("INSERT INTO chat_state_subscriptions"),
+        );
+        expect(subscribeCalls.length).toBe(1);
+        spy.mockRestore();
+      });
+
+      it("uses distinct cache entries for distinct SQL strings", async () => {
+        const spy = spyOn(db, "prepare");
+        await adapter.set("k", "v");
+        await adapter.get("k");
+        await adapter.delete("k");
+        const distinct = new Set(spy.mock.calls.map(([sql]) => String(sql)));
+        expect(distinct.size).toBe(spy.mock.calls.length);
+        spy.mockRestore();
+      });
+
+      it("evicts a failed prepare so a retry can succeed", async () => {
+        // Force prepare to fail on the first call, then restore.
+        const original = db.prepare.bind(db);
+        let calls = 0;
+        const flaky = mock((sql: string) => {
+          calls++;
+          if (calls === 1) throw new Error("boom");
+          return original(sql);
+        });
+        const spy = spyOn(db, "prepare").mockImplementation(flaky as never);
+        expect(adapter.set("k", "v")).rejects.toThrow("boom");
+        // Cache must not retain the rejected promise — second call re-enters prepare and succeeds.
+        await adapter.set("k", "v");
+        expect(calls).toBeGreaterThanOrEqual(2);
+        spy.mockRestore();
       });
     });
 

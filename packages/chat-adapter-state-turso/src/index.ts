@@ -12,6 +12,8 @@ import type { Database } from "@tursodatabase/database";
  */
 export type TursoClient = Connection | Database;
 
+type PreparedStatement = Awaited<ReturnType<TursoClient["prepare"]>>;
+
 export interface TursoStateAdapterOptions {
   /** A constructed client — `connect()` result from either turso driver. */
   client: TursoClient;
@@ -34,11 +36,27 @@ export class TursoStateAdapter implements StateAdapter {
   // here are sub-millisecond; agent turns happen outside, so this only
   // serializes the cheap part.
   private txQueue: Promise<unknown> = Promise.resolve();
+  // Per-instance prepared-statement cache. Each `client.prepare()` triggers a
+  // describe round-trip on the serverless driver; statements are tied to the
+  // connection and reusable across calls. Caching the promise (not the awaited
+  // statement) collapses concurrent first-uses into a single describe.
+  private readonly stmtCache = new Map<string, Promise<PreparedStatement>>();
 
   constructor(options: TursoStateAdapterOptions) {
     this.client = options.client;
     this.keyPrefix = options.keyPrefix || DEFAULT_KEY_PREFIX;
     this.logger = options.logger ?? new ConsoleLogger("info").child("turso");
+  }
+
+  private prepare(sql: string): Promise<PreparedStatement> {
+    const cached = this.stmtCache.get(sql);
+    if (cached) return cached;
+    const fresh = (async () => this.client.prepare(sql))();
+    this.stmtCache.set(sql, fresh);
+    fresh.catch(() => {
+      if (this.stmtCache.get(sql) === fresh) this.stmtCache.delete(sql);
+    });
+    return fresh;
   }
 
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -72,7 +90,7 @@ export class TursoStateAdapter implements StateAdapter {
 
   async subscribe(threadId: string): Promise<void> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `INSERT INTO chat_state_subscriptions (key_prefix, thread_id)
        VALUES (?, ?) ON CONFLICT DO NOTHING`,
     );
@@ -81,15 +99,13 @@ export class TursoStateAdapter implements StateAdapter {
 
   async unsubscribe(threadId: string): Promise<void> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(
-      `DELETE FROM chat_state_subscriptions WHERE key_prefix = ? AND thread_id = ?`,
-    );
+    const stmt = await this.prepare(`DELETE FROM chat_state_subscriptions WHERE key_prefix = ? AND thread_id = ?`);
     await stmt.run([this.keyPrefix, threadId]);
   }
 
   async isSubscribed(threadId: string): Promise<boolean> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `SELECT 1 AS present FROM chat_state_subscriptions
        WHERE key_prefix = ? AND thread_id = ? LIMIT 1`,
     );
@@ -103,11 +119,11 @@ export class TursoStateAdapter implements StateAdapter {
     const now = Date.now();
     const expiresAt = now + ttlMs;
 
-    const delExpired = await this.client.prepare(
+    const delExpired = await this.prepare(
       `DELETE FROM chat_state_locks
        WHERE key_prefix = ? AND thread_id = ? AND expires_at <= ?`,
     );
-    const insert = await this.client.prepare(
+    const insert = await this.prepare(
       `INSERT INTO chat_state_locks (key_prefix, thread_id, token, expires_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (key_prefix, thread_id) DO NOTHING
@@ -131,13 +147,13 @@ export class TursoStateAdapter implements StateAdapter {
 
   async forceReleaseLock(threadId: string): Promise<void> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(`DELETE FROM chat_state_locks WHERE key_prefix = ? AND thread_id = ?`);
+    const stmt = await this.prepare(`DELETE FROM chat_state_locks WHERE key_prefix = ? AND thread_id = ?`);
     await stmt.run([this.keyPrefix, threadId]);
   }
 
   async releaseLock(lock: Lock): Promise<void> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `DELETE FROM chat_state_locks
        WHERE key_prefix = ? AND thread_id = ? AND token = ?`,
     );
@@ -147,7 +163,7 @@ export class TursoStateAdapter implements StateAdapter {
   async extendLock(lock: Lock, ttlMs: number): Promise<boolean> {
     this.ensureConnected();
     const now = Date.now();
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `UPDATE chat_state_locks
        SET expires_at = ?, updated_at = ?
        WHERE key_prefix = ? AND thread_id = ? AND token = ? AND expires_at > ?
@@ -160,14 +176,14 @@ export class TursoStateAdapter implements StateAdapter {
   async get<T = unknown>(key: string): Promise<T | null> {
     this.ensureConnected();
     const now = Date.now();
-    const select = await this.client.prepare(
+    const select = await this.prepare(
       `SELECT value FROM chat_state_cache
        WHERE key_prefix = ? AND cache_key = ?
          AND (expires_at IS NULL OR expires_at > ?) LIMIT 1`,
     );
     const row = await select.get([this.keyPrefix, key, now]);
     if (!row) {
-      const del = await this.client.prepare(
+      const del = await this.prepare(
         `DELETE FROM chat_state_cache
          WHERE key_prefix = ? AND cache_key = ?
            AND expires_at IS NOT NULL AND expires_at <= ?`,
@@ -183,7 +199,7 @@ export class TursoStateAdapter implements StateAdapter {
     const now = Date.now();
     const serialized = JSON.stringify(value);
     const expiresAt = ttlMs ? now + ttlMs : null;
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `INSERT INTO chat_state_cache (key_prefix, cache_key, value, expires_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (key_prefix, cache_key) DO UPDATE
@@ -200,12 +216,12 @@ export class TursoStateAdapter implements StateAdapter {
     const serialized = JSON.stringify(value);
     const expiresAt = ttlMs ? now + ttlMs : null;
 
-    const delExpired = await this.client.prepare(
+    const delExpired = await this.prepare(
       `DELETE FROM chat_state_cache
        WHERE key_prefix = ? AND cache_key = ?
          AND expires_at IS NOT NULL AND expires_at <= ?`,
     );
-    const insert = await this.client.prepare(
+    const insert = await this.prepare(
       `INSERT INTO chat_state_cache (key_prefix, cache_key, value, expires_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (key_prefix, cache_key) DO NOTHING
@@ -224,7 +240,7 @@ export class TursoStateAdapter implements StateAdapter {
 
   async delete(key: string): Promise<void> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(`DELETE FROM chat_state_cache WHERE key_prefix = ? AND cache_key = ?`);
+    const stmt = await this.prepare(`DELETE FROM chat_state_cache WHERE key_prefix = ? AND cache_key = ?`);
     await stmt.run([this.keyPrefix, key]);
   }
 
@@ -233,15 +249,15 @@ export class TursoStateAdapter implements StateAdapter {
     const serialized = JSON.stringify(value);
     const expiresAt = options?.ttlMs ? Date.now() + options.ttlMs : null;
 
-    const insert = await this.client.prepare(
+    const insert = await this.prepare(
       `INSERT INTO chat_state_lists (key_prefix, list_key, value, expires_at)
        VALUES (?, ?, ?, ?)`,
     );
-    const refreshTtl = await this.client.prepare(
+    const refreshTtl = await this.prepare(
       `UPDATE chat_state_lists SET expires_at = ?
        WHERE key_prefix = ? AND list_key = ?`,
     );
-    const trim = await this.client.prepare(
+    const trim = await this.prepare(
       `DELETE FROM chat_state_lists
        WHERE key_prefix = ? AND list_key = ? AND seq NOT IN (
          SELECT seq FROM chat_state_lists
@@ -264,14 +280,14 @@ export class TursoStateAdapter implements StateAdapter {
   async getList<T = unknown>(key: string): Promise<T[]> {
     this.ensureConnected();
     const now = Date.now();
-    const del = await this.client.prepare(
+    const del = await this.prepare(
       `DELETE FROM chat_state_lists
        WHERE key_prefix = ? AND list_key = ?
          AND expires_at IS NOT NULL AND expires_at <= ?`,
     );
     await del.run([this.keyPrefix, key, now]);
 
-    const select = await this.client.prepare(
+    const select = await this.prepare(
       `SELECT value FROM chat_state_lists
        WHERE key_prefix = ? AND list_key = ? ORDER BY seq ASC`,
     );
@@ -284,15 +300,15 @@ export class TursoStateAdapter implements StateAdapter {
     const now = Date.now();
     const serialized = JSON.stringify(entry);
 
-    const purge = await this.client.prepare(
+    const purge = await this.prepare(
       `DELETE FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND expires_at <= ?`,
     );
-    const insert = await this.client.prepare(
+    const insert = await this.prepare(
       `INSERT INTO chat_state_queues (key_prefix, thread_id, value, expires_at)
        VALUES (?, ?, ?, ?)`,
     );
-    const trim = await this.client.prepare(
+    const trim = await this.prepare(
       `DELETE FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND seq NOT IN (
          SELECT seq FROM chat_state_queues
@@ -300,7 +316,7 @@ export class TursoStateAdapter implements StateAdapter {
          ORDER BY seq DESC LIMIT ?
        )`,
     );
-    const countStmt = await this.client.prepare(
+    const countStmt = await this.prepare(
       `SELECT COUNT(*) AS depth FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND expires_at > ?`,
     );
@@ -321,16 +337,16 @@ export class TursoStateAdapter implements StateAdapter {
   async dequeue(threadId: string): Promise<QueueEntry | null> {
     this.ensureConnected();
     const now = Date.now();
-    const purge = await this.client.prepare(
+    const purge = await this.prepare(
       `DELETE FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND expires_at <= ?`,
     );
-    const pick = await this.client.prepare(
+    const pick = await this.prepare(
       `SELECT seq, value FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND expires_at > ?
        ORDER BY seq ASC LIMIT 1`,
     );
-    const del = await this.client.prepare("DELETE FROM chat_state_queues WHERE seq = ?");
+    const del = await this.prepare("DELETE FROM chat_state_queues WHERE seq = ?");
 
     const value = await this.serialize(() =>
       this.client.transaction(async () => {
@@ -348,7 +364,7 @@ export class TursoStateAdapter implements StateAdapter {
 
   async queueDepth(threadId: string): Promise<number> {
     this.ensureConnected();
-    const stmt = await this.client.prepare(
+    const stmt = await this.prepare(
       `SELECT COUNT(*) AS depth FROM chat_state_queues
        WHERE key_prefix = ? AND thread_id = ? AND expires_at > ?`,
     );
