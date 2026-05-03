@@ -67,15 +67,9 @@ export class GitHubDrive implements Drive {
     this.branch = cfg.branch ?? "main";
     this.token = cfg.token;
     this.permission = cfg.permission ?? "read-only";
-    // Matches the `openxyz-app` GitHub App (display name "openxyz.app",
-    // App ID 3412708, owner @openxyz-app, bot user id 277066060). The
-    // `<user-id>+<slug>[bot]@users.noreply.github.com` email gets GitHub to
-    // attribute commits to the bot (avatar + "bot" badge in the UI) when
-    // pushed under a token minted from this app's install. Override
-    // `cfg.author` for any other identity.
     this.author = cfg.author ?? {
-      name: "openxyz-app[bot]",
-      email: "277066060+openxyz-app[bot]@users.noreply.github.com",
+      name: "openxyz[agent]",
+      email: "agent@openxyz.app",
     };
   }
 
