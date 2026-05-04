@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@openxyz-provider/cloudflare",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "fuxingloh",
+  "type": "module",
+  "exports": {
+    "./drive": "./drive.ts"
+  },
+  "files": [
+    "drive.ts"
+  ],
+  "dependencies": {
+    "@openxyz/runtime": "workspace:*",
+    "isomorphic-git": "^1.27.1",
+    "just-bash": "^2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "chat": "catalog:"
+  }
+}
