@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { Tool } from "ai";
 import { formatLoadError, OpenXyz, type OpenXyzRuntime, type Skipped } from "@openxyz/runtime/openxyz";
+import { EnvNotFoundError, EnvParseError } from "../../env";
 import type { Model } from "@openxyz/runtime/model";
 import type { Channel } from "@openxyz/runtime/channels";
 import { loadChannel } from "../load-channel";
@@ -62,15 +63,25 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
   const t = scan.template;
   const skipped: Skipped[] = [];
 
+  /**
+   * Narrow soft-load. Only typed env errors get swallowed — operator-knob
+   * failures the user can fix by setting an env var. Anything else
+   * re-throws so the CLI exits non-zero and the bug surfaces immediately.
+   */
+  const handleLoadErr = (err: unknown, kind: Skipped["kind"], name: string): void => {
+    if (!(err instanceof EnvNotFoundError) && !(err instanceof EnvParseError)) throw err;
+    const reason = formatLoadError(err);
+    console.warn(`[openxyz] ${kind}s/${name} skipped: ${reason}`);
+    skipped.push({ kind, name, reason });
+  };
+
   const channels: Record<string, Channel> = {};
   for (const [name, path] of Object.entries(t.channels)) {
     try {
       const mod = await import(abs(path));
       channels[name] = loadChannel(mod, name);
     } catch (err) {
-      const reason = formatLoadError(err);
-      console.warn(`[openxyz] channels/${name} skipped: ${reason}`);
-      skipped.push({ kind: "channel", name, reason });
+      handleLoadErr(err, "channel", name);
     }
   }
 
@@ -88,9 +99,7 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
       }
       if (expanded.cleanup) cleanup.push(expanded.cleanup);
     } catch (err) {
-      const reason = formatLoadError(err);
-      console.warn(`[openxyz] tools/${name} skipped: ${reason}`);
-      skipped.push({ kind: "tool", name, reason });
+      handleLoadErr(err, "tool", name);
     }
   }
 
@@ -119,20 +128,15 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
     if (!path) continue; // referenced but no source — surfaces clearly when an agent picks it
     try {
       const mod = await import(path);
-      if (!mod.default) {
-        const reason = "no default export";
-        console.warn(`[openxyz] models/${name} skipped: ${reason}`);
-        skipped.push({ kind: "model", name, reason });
-        continue;
-      }
+      // Missing default export is a template bug (forgot `export default`),
+      // not an env knob — let it bubble.
+      if (!mod.default) throw new Error(`models/${name} has no default export`);
       // Convert the whole module — loadModel reads `default` (awaiting if
       // it's a factory) plus optional `systemPrompt` / `limit` named
       // exports. Runtime only sees the canonical `Model` wrapper.
       models[name] = await loadModel(mod);
     } catch (err) {
-      const reason = formatLoadError(err);
-      console.warn(`[openxyz] models/${name} skipped: ${reason}`);
-      skipped.push({ kind: "model", name, reason });
+      handleLoadErr(err, "model", name);
     }
   }
 
@@ -154,17 +158,11 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
   for (const [name, path] of Object.entries(t.drives)) {
     try {
       const mod = await import(abs(path));
-      if (!mod.default) {
-        const reason = "no default export";
-        console.warn(`[openxyz] drives/${name} skipped: ${reason}`);
-        skipped.push({ kind: "drive", name, reason });
-        continue;
-      }
+      // Missing default export is a template bug, not an env knob — bubble.
+      if (!mod.default) throw new Error(`drives/${name} has no default export`);
       drives[`/mnt/${name}`] = mod.default as Drive;
     } catch (err) {
-      const reason = formatLoadError(err);
-      console.warn(`[openxyz] drives/${name} skipped: ${reason}`);
-      skipped.push({ kind: "drive", name, reason });
+      handleLoadErr(err, "drive", name);
     }
   }
 

@@ -45,14 +45,19 @@ export async function generateEntrypoint(
   // (formerly `gray-matter`) parser from the production bundle entirely.
   // See mnemonic/068 for the gray-matter→yaml crash story.
   imports.push(
-    `import { OpenXyz, loadChannel, getDb, TursoStateAdapter, waitUntil, WorkspaceDrive, loadTools, loadModel, formatLoadError } from "openxyz/_runtime";`,
+    `import { OpenXyz, loadChannel, getDb, TursoStateAdapter, waitUntil, WorkspaceDrive, loadTools, loadModel, formatLoadError, EnvNotFoundError, EnvParseError } from "openxyz/_runtime";`,
   );
 
-  // Channels / tools / drives use **dynamic** imports wrapped in try/catch so a
-  // module whose top-level evaluation throws (typical case: `env.X.toString()`
-  // on an unset var) skips its slot instead of crashing the whole entrypoint.
-  // The failure is captured into `__skipped` and surfaces as the trailing
-  // `## Unavailable` section of the system prompt at agent runtime.
+  // Channels / tools / drives use **dynamic** imports wrapped in a NARROW
+  // try/catch — only `EnvNotFoundError` / `EnvParseError` get soft-skipped.
+  // Justification: `openxyz build` runs in CI without runtime secrets (env
+  // vars live in the Vercel/CF dashboard, not in build env). At cold start
+  // in the deployed function, runtime env IS set, but a forgotten/typo'd
+  // var still surfaces as `EnvNotFoundError` at module init. Soft-skipping
+  // only that class keeps siblings working and surfaces the missing key
+  // structurally (boot log + agent's `## Unavailable` section). Anything
+  // else — syntax errors, broken imports, vendor SDK crashes — is a real
+  // bug; let it throw and crash the cold start so it lands in deploy logs.
   const channelDynamic: Array<{ name: string; rel: string }> = [];
   Object.entries(t.channels).forEach(([name, path]) => {
     channelDynamic.push({ name, rel: toRel(abs(path)) });
@@ -113,12 +118,17 @@ export async function generateEntrypoint(
     imports.push(`import ${agentsMdId} from ${JSON.stringify(toRel(abs(t["AGENTS.md"])))} with { type: "text" };`);
   }
 
-  // Boot-time soft-load: each channel/tool/drive/model module is dynamically
-  // imported inside try/catch. A throwing module (typical: `env.X.toString()`
-  // on an unset var) skips its slot, gets recorded in `__skipped`, and the
-  // siblings keep working. The `## Unavailable` section of the system prompt
-  // is built from this list so the agent can self-explain at runtime.
+  // Boot-time soft-load — narrow scope. `__handleLoadErr` only swallows
+  // typed env errors (the user has a knob to turn — set the var, redeploy).
+  // Anything else re-throws so the cold start crashes loudly into deploy
+  // logs instead of degrading silently.
   body.push(`const __skipped = [];`);
+  body.push(`function __handleLoadErr(err, kind, name) {`);
+  body.push(`  if (!(err instanceof EnvNotFoundError) && !(err instanceof EnvParseError)) throw err;`);
+  body.push(`  const reason = formatLoadError(err);`);
+  body.push(`  console.warn(\`[openxyz] \${kind}s/\${name} skipped: \${reason}\`);`);
+  body.push(`  __skipped.push({ kind, name, reason });`);
+  body.push(`}`);
   body.push(``);
 
   body.push(`const __channels = {};`);
@@ -126,11 +136,7 @@ export async function generateEntrypoint(
     body.push(`try {`);
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  __channels[${JSON.stringify(name)}] = loadChannel(mod, ${JSON.stringify(name)});`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] channels/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "channel", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "channel", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
@@ -147,11 +153,7 @@ export async function generateEntrypoint(
     body.push(`    __tools[id] = t;`);
     body.push(`  }`);
     body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] tools/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "tool", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "tool", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
@@ -161,26 +163,16 @@ export async function generateEntrypoint(
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  if (!mod.default) throw new Error("no default export");`);
     body.push(`  __drives[${JSON.stringify(`/mnt/${name}`)}] = mod.default;`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] drives/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "drive", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "drive", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
-  // Models — names referenced by agents that fail to load show up in
-  // `## Unavailable` so the agent knows why a model selection is missing.
   body.push(`const __models = {};`);
   for (const { name, rel } of modelDynamic) {
     body.push(`try {`);
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  __models[${JSON.stringify(name)}] = await loadModel(mod);`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] models/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "model", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "model", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 

@@ -50,25 +50,26 @@ export type OpenXyzRuntime = {
    */
   cleanup?: Array<() => Promise<void>>;
   /**
-   * Modules the loader couldn't attach — typically because their import-time
-   * side-effects threw (e.g. `env.X.toString()` on an unset var). Surfaced to
-   * the agent as the trailing `## Unavailable` section of the system prompt
-   * so it can self-explain when a user asks "why didn't you use the github
-   * tool?". Fail-soft: a missing module skips its slot, siblings keep working.
+   * Modules the loader couldn't attach because of a typed env error
+   * (`EnvNotFoundError` / `EnvParseError`). **Narrow by design** — only
+   * operator-knob failures are soft-skipped; everything else (syntax,
+   * import resolution, vendor SDK constructor crashes) re-throws and lands
+   * in deploy logs as a hard error. Rationale: `openxyz build` runs in CI
+   * without runtime secrets — env vars live in the platform dashboard, set
+   * for the running function only. A missing var at cold start is the
+   * operator's job to fix, but it's also a knowable, structured failure
+   * (we have the var name + `.describe()` label), so we can keep siblings
+   * working and still surface the cause cleanly. Anything outside that
+   * shape is a real bug that must crash loud.
    */
   skipped?: Skipped[];
 };
 
 /**
- * One entry in `OpenXyzRuntime.skipped` — a module that couldn't be attached.
- * `kind` matches the template directory it came from. `reason` is intended
- * for the **agent** to read in the system prompt — produced by
- * `formatLoadError`, which keeps the error class name (`EnvNotFoundError`,
- * `EnvParseError`, …), the message, and one level of cause chain. Enough
- * for the agent to tell the user "you need to set `BRAIN_GH_TOKEN`" without
- * having to ask follow-up questions. Loaders MUST go through `formatLoadError`
- * so the surface stays uniform across dev (`openxyz start`) and the
- * generated production entrypoint.
+ * One entry in `OpenXyzRuntime.skipped` — a module that hit a typed env
+ * failure at boot. `kind` matches the template directory it came from.
+ * `reason` is produced by `formatLoadError` so the message format is
+ * identical across dev (`openxyz start`) and the production entrypoint.
  */
 export type Skipped = {
   kind: "channel" | "tool" | "drive" | "model";
@@ -77,24 +78,17 @@ export type Skipped = {
 };
 
 /**
- * Render a caught load-time error into a single line the agent can act on.
- * Includes:
- *   - class name when not generic `Error` (e.g. `EnvNotFoundError`,
- *     `EnvParseError`, `TypeError`) — lets the agent distinguish "you forgot
- *     to set an env" from "syntax error in the module"
- *   - `.message` verbatim — `EnvNotFoundError` already encodes the key +
- *     `.describe(...)` label, so this carries the env var name and what it's
- *     for straight into the prompt
- *   - one level of `.cause` (class + message) — common when a module wraps
- *     a downstream failure (e.g. a vendor SDK throwing inside a constructor)
+ * Render a caught env-load error into a single line for boot logs and the
+ * `openxyz.skipped[]` ledger. Keeps:
+ *   - class name (`EnvNotFoundError` / `EnvParseError`) — lets log readers
+ *     distinguish "var missing" from "var set but invalid"
+ *   - `.message` verbatim — already encodes the var key + `.describe(...)`
+ *     label, which is what the operator needs to fix the deploy
+ *   - one level of `.cause` (class + message) — for env wrappers that
+ *     include a downstream cause
  *
- * Output is clamped at 800 chars so a pathologically long stack-trace-as-
- * message can't blow the system prompt. The agent sees ~10–20 of these
- * lines worst case; that's the budget.
- *
- * Stable single-line format. The system-prompt cache key depends on it —
- * any change here invalidates every cached prefix that contains a
- * `## Unavailable` block.
+ * Clamped at 800 chars so a pathologically long message can't blow log
+ * lines. Format is stable — call sites depend on the single-line shape.
  */
 export function formatLoadError(err: unknown): string {
   const MAX = 800;

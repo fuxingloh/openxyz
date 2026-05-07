@@ -18,6 +18,7 @@ import type { BunPlugin } from "bun";
 export function virtualRuntimePlugin(): BunPlugin {
   const runtimeRoot = new URL("../../../../../openxyz-runtime/", import.meta.url).pathname;
   const openxyzRoot = new URL("../../../../", import.meta.url).pathname;
+  const envPath = new URL("../../../../env.ts", import.meta.url).pathname;
   const loadChannel = new URL("../../../load-channel.ts", import.meta.url).pathname;
   const loadModel = new URL("../../../load-model.ts", import.meta.url).pathname;
   const loadTools = new URL("../../../load-tools.ts", import.meta.url).pathname;
@@ -34,6 +35,7 @@ export function virtualRuntimePlugin(): BunPlugin {
         loader: "ts",
         contents: [
           `export { OpenXyz, formatLoadError } from ${JSON.stringify(runtimeRoot + "openxyz.ts")};`,
+          `export { EnvNotFoundError, EnvParseError } from ${JSON.stringify(envPath)};`,
           `export { WorkspaceDrive } from ${JSON.stringify(runtimeRoot + "workspace.ts")};`,
           `export { loadChannel } from ${JSON.stringify(loadChannel)};`,
           `export { loadModel } from ${JSON.stringify(loadModel)};`,

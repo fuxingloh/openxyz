@@ -40,14 +40,12 @@ export async function generateEntrypoint(
   const body: string[] = [];
 
   imports.push(
-    `import { OpenXyz, loadChannel, createCloudflareState, ChatStateDO, WorkspaceDrive, loadTools, loadModel, formatLoadError } from "openxyz/_runtime";`,
+    `import { OpenXyz, loadChannel, createCloudflareState, ChatStateDO, WorkspaceDrive, loadTools, loadModel, formatLoadError, EnvNotFoundError, EnvParseError } from "openxyz/_runtime";`,
   );
 
-  // Boot-time soft-load: every channel/tool/drive/model uses dynamic imports
-  // wrapped in try/catch so a module whose top-level evaluation throws
-  // (typical: `env.X.toString()` on an unset var) skips its slot, gets recorded
-  // in `__skipped`, and the siblings keep working. Mirrors the Vercel
-  // entrypoint exactly — keep the two in sync.
+  // Narrow soft-load — see Vercel entrypoint for full rationale. Only typed
+  // env errors get skipped; any other cold-start failure re-throws and lands
+  // in deploy logs.
   const channelDynamic: Array<{ name: string; rel: string }> = [];
   Object.entries(t.channels).forEach(([name, path]) => {
     channelDynamic.push({ name, rel: toRel(abs(path)) });
@@ -97,8 +95,14 @@ export async function generateEntrypoint(
   body.push(`export { ChatStateDO };`);
   body.push(``);
 
-  // Soft-load scaffolding — see Vercel entrypoint for full rationale.
+  // Narrow soft-load scaffolding — see Vercel entrypoint for full rationale.
   body.push(`const __skipped = [];`);
+  body.push(`function __handleLoadErr(err, kind, name) {`);
+  body.push(`  if (!(err instanceof EnvNotFoundError) && !(err instanceof EnvParseError)) throw err;`);
+  body.push(`  const reason = formatLoadError(err);`);
+  body.push(`  console.warn(\`[openxyz] \${kind}s/\${name} skipped: \${reason}\`);`);
+  body.push(`  __skipped.push({ kind, name, reason });`);
+  body.push(`}`);
   body.push(``);
 
   body.push(`const __channels = {};`);
@@ -106,11 +110,7 @@ export async function generateEntrypoint(
     body.push(`try {`);
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  __channels[${JSON.stringify(name)}] = loadChannel(mod, ${JSON.stringify(name)});`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] channels/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "channel", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "channel", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
@@ -127,11 +127,7 @@ export async function generateEntrypoint(
     body.push(`    __tools[id] = t;`);
     body.push(`  }`);
     body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] tools/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "tool", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "tool", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
@@ -141,11 +137,7 @@ export async function generateEntrypoint(
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  if (!mod.default) throw new Error("no default export");`);
     body.push(`  __drives[${JSON.stringify(`/mnt/${name}`)}] = mod.default;`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] drives/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "drive", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "drive", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 
@@ -154,11 +146,7 @@ export async function generateEntrypoint(
     body.push(`try {`);
     body.push(`  const mod = await import(${JSON.stringify(rel)});`);
     body.push(`  __models[${JSON.stringify(name)}] = await loadModel(mod);`);
-    body.push(`} catch (err) {`);
-    body.push(`  const reason = formatLoadError(err);`);
-    body.push(`  console.warn(\`[openxyz] models/${name} skipped: \${reason}\`);`);
-    body.push(`  __skipped.push({ kind: "model", name: ${JSON.stringify(name)}, reason });`);
-    body.push(`}`);
+    body.push(`} catch (err) { __handleLoadErr(err, "model", ${JSON.stringify(name)}); }`);
   }
   body.push(``);
 

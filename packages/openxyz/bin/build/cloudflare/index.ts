@@ -6,6 +6,7 @@ import { generateEntrypoint } from "./entrypoint";
 import { generateWranglerJsonc } from "./wrangler";
 import { virtualRuntimePlugin } from "./plugins/virtual-runtime";
 import { vfileBrowserShimPlugin } from "./plugins/vfile-browser-shim";
+import { isomorphicGitHttpShimPlugin } from "./plugins/isomorphic-git-http-shim";
 import { inMemoryWorkspacePlugin } from "../plugins/in-memory-workspace";
 import { modelsApiPrefetchPlugin } from "../plugins/models-api-prefetch";
 import { prefetchForBuild } from "../../../models/providers/_api";
@@ -72,6 +73,7 @@ export async function buildCloudflare(cwd: string): Promise<void> {
       inMemoryWorkspacePlugin(cwd, files.files),
       virtualRuntimePlugin(),
       vfileBrowserShimPlugin(),
+      isomorphicGitHttpShimPlugin(),
       modelsApiPrefetchPlugin(prefetchedLimits),
     ],
   });
