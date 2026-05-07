@@ -45,55 +45,46 @@ export async function generateEntrypoint(
   // (formerly `gray-matter`) parser from the production bundle entirely.
   // See mnemonic/068 for the gray-matter→yaml crash story.
   imports.push(
-    `import { OpenXyz, loadChannel, getDb, TursoStateAdapter, waitUntil, WorkspaceDrive, loadTools, loadModel } from "openxyz/_runtime";`,
+    `import { OpenXyz, loadChannel, getDb, TursoStateAdapter, waitUntil, WorkspaceDrive, loadTools, loadModel, formatLoadError } from "openxyz/_runtime";`,
   );
 
-  const channelEntries: string[] = [];
-  Object.entries(t.channels).forEach(([name, path], i) => {
-    const id = `__ch${i}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    channelEntries.push(`  ${JSON.stringify(name)}: loadChannel(${id}, ${JSON.stringify(name)}),`);
+  // Channels / tools / drives use **dynamic** imports wrapped in try/catch so a
+  // module whose top-level evaluation throws (typical case: `env.X.toString()`
+  // on an unset var) skips its slot instead of crashing the whole entrypoint.
+  // The failure is captured into `__skipped` and surfaces as the trailing
+  // `## Unavailable` section of the system prompt at agent runtime.
+  const channelDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.channels).forEach(([name, path]) => {
+    channelDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
   // Tools modules can default-export a tool(), an mcp(), or expose named
   // tool() exports. Discrimination (+ MCP connect + cleanup) happens at boot
-  // via `loadTools`. Namespace import so we capture every export.
-  const toolModuleEntries: string[] = [];
-  Object.entries(t.tools).forEach(([name, path], i) => {
-    const id = `__tool${i}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    toolModuleEntries.push(`  { name: ${JSON.stringify(name)}, mod: ${id} },`);
+  // via `loadTools`.
+  const toolDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.tools).forEach(([name, path]) => {
+    toolDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
   // Drives: WorkspaceDrive is always mounted at /workspace (runtime-intercepted
   // by `inMemoryWorkspacePlugin` for the packed snapshot). Template-provided
   // `drives/<name>.ts` files mount at `/mnt/<name>/`.
-  const driveEntries: string[] = [`  "/workspace": new WorkspaceDrive(import.meta.dirname, "read-write"),`];
-  Object.entries(t.drives).forEach(([name, path], i) => {
-    const id = `__drive${i}`;
-    imports.push(`import ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    driveEntries.push(`  ${JSON.stringify(`/mnt/${name}`)}: ${id},`);
+  const driveDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.drives).forEach(([name, path]) => {
+    driveDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
-  // Models: emit only names actually referenced by agents. `auto` is always
-  // referenced (agents without explicit `model:` fall back to it), so if the
-  // template doesn't override `models/auto.ts`, point at openxyz's shipped one.
-  // Factory exports (e.g. `auto.ts` that switches on `OPENXYZ_MODEL`) are
-  // resolved at boot time on the deployed function — the generated entrypoint
-  // awaits them before handing the map to `OpenXyz`.
-  const modelPairs: Array<{ name: string; id: string }> = [];
-  let modelIdx = 0;
+  // Models: dynamic imports too, same soft-load reasoning as channels/tools/
+  // drives. `auto` is always referenced (agents without explicit `model:` fall
+  // back to it), so if the template doesn't override `models/auto.ts`, point at
+  // openxyz's shipped one. Factory exports (e.g. `auto.ts` that switches on
+  // `OPENXYZ_MODEL`) are resolved at boot time on the deployed function.
+  const modelDynamic: Array<{ name: string; rel: string }> = [];
   for (const name of usedModels) {
     const path = t.models[name] ? abs(t.models[name]!) : name === "auto" ? shippedAuto : undefined;
     if (!path) continue; // referenced but no source — agent picking it surfaces clearly at runtime
-    const id = `__model${modelIdx++}`;
-    // Namespace import captures `default` + `systemPrompt` + `limit` named
-    // exports. `loadModel` reads whichever are present, awaits `default`
-    // if it's a factory, fills in shipped defaults for the rest.
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(path))};`);
-    modelPairs.push({ name, id });
+    modelDynamic.push({ name, rel: toRel(path) });
   }
-  const modelEntries = modelPairs.map(({ name, id }) => `  ${JSON.stringify(name)}: await loadModel(${id}),`);
 
   // Agents: parsed at build time, emitted as JSON literals. No runtime
   // `parseAgent` call, no YAML parser in the bundle.
@@ -122,36 +113,89 @@ export async function generateEntrypoint(
     imports.push(`import ${agentsMdId} from ${JSON.stringify(toRel(abs(t["AGENTS.md"])))} with { type: "text" };`);
   }
 
-  // Expand every tools/*.ts module at boot — MCP servers connect here, named
-  // tool() exports get flattened into `<filename>_<export>` ids. Must NOT run
-  // at build time (credentials, network, wrong env). `__toolCleanup` carries
-  // teardown callbacks into `runtime.cleanup` so `OpenXyz.stop()` can close
-  // MCP clients on shutdown.
-  if (toolModuleEntries.length > 0) {
-    body.push(`const __toolModules = [\n${toolModuleEntries.join("\n")}\n];`);
-    body.push(`const __tools = {};`);
-    body.push(`const __toolCleanup = [];`);
-    body.push(`for (const { name, mod } of __toolModules) {`);
-    body.push(`  const expanded = await loadTools(name, mod);`);
-    body.push(`  Object.assign(__tools, expanded.tools);`);
-    body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
+  // Boot-time soft-load: each channel/tool/drive/model module is dynamically
+  // imported inside try/catch. A throwing module (typical: `env.X.toString()`
+  // on an unset var) skips its slot, gets recorded in `__skipped`, and the
+  // siblings keep working. The `## Unavailable` section of the system prompt
+  // is built from this list so the agent can self-explain at runtime.
+  body.push(`const __skipped = [];`);
+  body.push(``);
+
+  body.push(`const __channels = {};`);
+  for (const { name, rel } of channelDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  __channels[${JSON.stringify(name)}] = loadChannel(mod, ${JSON.stringify(name)});`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] channels/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "channel", name: ${JSON.stringify(name)}, reason });`);
     body.push(`}`);
-  } else {
-    body.push(`const __tools = {};`);
-    body.push(`const __toolCleanup = [];`);
   }
   body.push(``);
+
+  body.push(`const __tools = {};`);
+  body.push(`const __toolCleanup = [];`);
+  for (const { name, rel } of toolDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  const expanded = await loadTools(${JSON.stringify(name)}, mod);`);
+    body.push(`  for (const [id, t] of Object.entries(expanded.tools)) {`);
+    body.push(
+      `    if (__tools[id]) console.warn(\`[openxyz] tool id "\${id}" defined by multiple files, last one wins\`);`,
+    );
+    body.push(`    __tools[id] = t;`);
+    body.push(`  }`);
+    body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] tools/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "tool", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
+  body.push(`const __drives = { "/workspace": new WorkspaceDrive(import.meta.dirname, "read-write") };`);
+  for (const { name, rel } of driveDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  if (!mod.default) throw new Error("no default export");`);
+    body.push(`  __drives[${JSON.stringify(`/mnt/${name}`)}] = mod.default;`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] drives/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "drive", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
+  // Models — names referenced by agents that fail to load show up in
+  // `## Unavailable` so the agent knows why a model selection is missing.
+  body.push(`const __models = {};`);
+  for (const { name, rel } of modelDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  __models[${JSON.stringify(name)}] = await loadModel(mod);`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] models/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "model", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
   body.push(`const openxyz = new OpenXyz({`);
   // Runtime cwd = function directory on Vercel, not the build machine's path.
   body.push(`  cwd: import.meta.dirname,`);
-  body.push(channelEntries.length > 0 ? `  channels: {\n${channelEntries.join("\n")}\n  },` : `  channels: {},`);
+  body.push(`  channels: __channels,`);
   body.push(`  tools: __tools,`);
   body.push(`  cleanup: __toolCleanup,`);
   body.push(agentEntries.length > 0 ? `  agents: {\n${agentEntries.join("\n")}\n  },` : `  agents: {},`);
-  body.push(modelEntries.length > 0 ? `  models: {\n${modelEntries.join("\n")}\n  },` : `  models: {},`);
+  body.push(`  models: __models,`);
   body.push(skillEntries.length > 0 ? `  skills: [\n${skillEntries.join("\n")}\n  ],` : `  skills: [],`);
-  body.push(`  drives: {\n${driveEntries.join("\n")}\n  },`);
+  body.push(`  drives: __drives,`);
   if (agentsMdId) body.push(`  "AGENTS.md": ${agentsMdId},`);
+  body.push(`  skipped: __skipped,`);
   body.push(`});`);
   // Serverless entrypoint: the function can be suspended between invocations,
   // so we don't wire a shutdown hook — the Turso client's `close()` only

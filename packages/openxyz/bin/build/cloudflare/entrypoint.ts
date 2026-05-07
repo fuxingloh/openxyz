@@ -40,40 +40,35 @@ export async function generateEntrypoint(
   const body: string[] = [];
 
   imports.push(
-    `import { OpenXyz, loadChannel, createCloudflareState, ChatStateDO, WorkspaceDrive, loadTools, loadModel } from "openxyz/_runtime";`,
+    `import { OpenXyz, loadChannel, createCloudflareState, ChatStateDO, WorkspaceDrive, loadTools, loadModel, formatLoadError } from "openxyz/_runtime";`,
   );
 
-  const channelEntries: string[] = [];
-  Object.entries(t.channels).forEach(([name, path], i) => {
-    const id = `__ch${i}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    channelEntries.push(`  ${JSON.stringify(name)}: loadChannel(${id}, ${JSON.stringify(name)}),`);
+  // Boot-time soft-load: every channel/tool/drive/model uses dynamic imports
+  // wrapped in try/catch so a module whose top-level evaluation throws
+  // (typical: `env.X.toString()` on an unset var) skips its slot, gets recorded
+  // in `__skipped`, and the siblings keep working. Mirrors the Vercel
+  // entrypoint exactly — keep the two in sync.
+  const channelDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.channels).forEach(([name, path]) => {
+    channelDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
-  const toolModuleEntries: string[] = [];
-  Object.entries(t.tools).forEach(([name, path], i) => {
-    const id = `__tool${i}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    toolModuleEntries.push(`  { name: ${JSON.stringify(name)}, mod: ${id} },`);
+  const toolDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.tools).forEach(([name, path]) => {
+    toolDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
-  const driveEntries: string[] = [`  "/workspace": new WorkspaceDrive(import.meta.dirname, "read-write"),`];
-  Object.entries(t.drives).forEach(([name, path], i) => {
-    const id = `__drive${i}`;
-    imports.push(`import ${id} from ${JSON.stringify(toRel(abs(path)))};`);
-    driveEntries.push(`  ${JSON.stringify(`/mnt/${name}`)}: ${id},`);
+  const driveDynamic: Array<{ name: string; rel: string }> = [];
+  Object.entries(t.drives).forEach(([name, path]) => {
+    driveDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
-  const modelPairs: Array<{ name: string; id: string }> = [];
-  let modelIdx = 0;
+  const modelDynamic: Array<{ name: string; rel: string }> = [];
   for (const name of usedModels) {
     const path = t.models[name] ? abs(t.models[name]!) : name === "auto" ? shippedAuto : undefined;
     if (!path) continue;
-    const id = `__model${modelIdx++}`;
-    imports.push(`import * as ${id} from ${JSON.stringify(toRel(path))};`);
-    modelPairs.push({ name, id });
+    modelDynamic.push({ name, rel: toRel(path) });
   }
-  const modelEntries = modelPairs.map(({ name, id }) => `  ${JSON.stringify(name)}: await loadModel(${id}),`);
 
   const agentEntries: string[] = [];
   for (const { name, path } of mergedAgents) {
@@ -102,30 +97,82 @@ export async function generateEntrypoint(
   body.push(`export { ChatStateDO };`);
   body.push(``);
 
-  if (toolModuleEntries.length > 0) {
-    body.push(`const __toolModules = [\n${toolModuleEntries.join("\n")}\n];`);
-    body.push(`const __tools = {};`);
-    body.push(`const __toolCleanup = [];`);
-    body.push(`for (const { name, mod } of __toolModules) {`);
-    body.push(`  const expanded = await loadTools(name, mod);`);
-    body.push(`  Object.assign(__tools, expanded.tools);`);
-    body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
+  // Soft-load scaffolding — see Vercel entrypoint for full rationale.
+  body.push(`const __skipped = [];`);
+  body.push(``);
+
+  body.push(`const __channels = {};`);
+  for (const { name, rel } of channelDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  __channels[${JSON.stringify(name)}] = loadChannel(mod, ${JSON.stringify(name)});`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] channels/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "channel", name: ${JSON.stringify(name)}, reason });`);
     body.push(`}`);
-  } else {
-    body.push(`const __tools = {};`);
-    body.push(`const __toolCleanup = [];`);
   }
   body.push(``);
+
+  body.push(`const __tools = {};`);
+  body.push(`const __toolCleanup = [];`);
+  for (const { name, rel } of toolDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  const expanded = await loadTools(${JSON.stringify(name)}, mod);`);
+    body.push(`  for (const [id, t] of Object.entries(expanded.tools)) {`);
+    body.push(
+      `    if (__tools[id]) console.warn(\`[openxyz] tool id "\${id}" defined by multiple files, last one wins\`);`,
+    );
+    body.push(`    __tools[id] = t;`);
+    body.push(`  }`);
+    body.push(`  if (expanded.cleanup) __toolCleanup.push(expanded.cleanup);`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] tools/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "tool", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
+  body.push(`const __drives = { "/workspace": new WorkspaceDrive(import.meta.dirname, "read-write") };`);
+  for (const { name, rel } of driveDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  if (!mod.default) throw new Error("no default export");`);
+    body.push(`  __drives[${JSON.stringify(`/mnt/${name}`)}] = mod.default;`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] drives/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "drive", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
+  body.push(`const __models = {};`);
+  for (const { name, rel } of modelDynamic) {
+    body.push(`try {`);
+    body.push(`  const mod = await import(${JSON.stringify(rel)});`);
+    body.push(`  __models[${JSON.stringify(name)}] = await loadModel(mod);`);
+    body.push(`} catch (err) {`);
+    body.push(`  const reason = formatLoadError(err);`);
+    body.push(`  console.warn(\`[openxyz] models/${name} skipped: \${reason}\`);`);
+    body.push(`  __skipped.push({ kind: "model", name: ${JSON.stringify(name)}, reason });`);
+    body.push(`}`);
+  }
+  body.push(``);
+
   body.push(`const openxyz = new OpenXyz({`);
   body.push(`  cwd: import.meta.dirname,`);
-  body.push(channelEntries.length > 0 ? `  channels: {\n${channelEntries.join("\n")}\n  },` : `  channels: {},`);
+  body.push(`  channels: __channels,`);
   body.push(`  tools: __tools,`);
   body.push(`  cleanup: __toolCleanup,`);
   body.push(agentEntries.length > 0 ? `  agents: {\n${agentEntries.join("\n")}\n  },` : `  agents: {},`);
-  body.push(modelEntries.length > 0 ? `  models: {\n${modelEntries.join("\n")}\n  },` : `  models: {},`);
+  body.push(`  models: __models,`);
   body.push(skillEntries.length > 0 ? `  skills: [\n${skillEntries.join("\n")}\n  ],` : `  skills: [],`);
-  body.push(`  drives: {\n${driveEntries.join("\n")}\n  },`);
+  body.push(`  drives: __drives,`);
   if (agentsMdId) body.push(`  "AGENTS.md": ${agentsMdId},`);
+  body.push(`  skipped: __skipped,`);
   body.push(`});`);
   body.push(``);
 

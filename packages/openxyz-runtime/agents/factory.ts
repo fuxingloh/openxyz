@@ -92,6 +92,7 @@ export class AgentFactory {
       tools,
       skills,
       "AGENTS.md": this.#runtime["AGENTS.md"],
+      skipped: this.#runtime.skipped,
     });
   }
 

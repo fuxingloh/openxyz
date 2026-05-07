@@ -34,7 +34,7 @@ export function virtualRuntimePlugin(): BunPlugin {
       build.onLoad({ filter: /.*/, namespace: "openxyz-runtime" }, () => ({
         loader: "ts",
         contents: [
-          `export { OpenXyz } from ${JSON.stringify(runtimeRoot + "openxyz.ts")};`,
+          `export { OpenXyz, formatLoadError } from ${JSON.stringify(runtimeRoot + "openxyz.ts")};`,
           `export { WorkspaceDrive } from ${JSON.stringify(runtimeRoot + "workspace.ts")};`,
           `export { loadChannel } from ${JSON.stringify(loadChannel)};`,
           `export { loadModel } from ${JSON.stringify(loadModel)};`,

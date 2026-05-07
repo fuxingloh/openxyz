@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Tool } from "ai";
-import { OpenXyz, type OpenXyzRuntime } from "@openxyz/runtime/openxyz";
+import { formatLoadError, OpenXyz, type OpenXyzRuntime, type Skipped } from "@openxyz/runtime/openxyz";
 import type { Model } from "@openxyz/runtime/model";
 import type { Channel } from "@openxyz/runtime/channels";
 import { loadChannel } from "../load-channel";
@@ -60,25 +60,38 @@ async function action(): Promise<void> {
 async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
   const abs = (p: string) => join(scan.cwd, p);
   const t = scan.template;
+  const skipped: Skipped[] = [];
 
   const channels: Record<string, Channel> = {};
   for (const [name, path] of Object.entries(t.channels)) {
-    const mod = await import(abs(path));
-    channels[name] = loadChannel(mod, name);
+    try {
+      const mod = await import(abs(path));
+      channels[name] = loadChannel(mod, name);
+    } catch (err) {
+      const reason = formatLoadError(err);
+      console.warn(`[openxyz] channels/${name} skipped: ${reason}`);
+      skipped.push({ kind: "channel", name, reason });
+    }
   }
 
   const tools: Record<string, Tool> = {};
   const cleanup: Array<() => Promise<void>> = [];
   for (const [name, path] of Object.entries(t.tools)) {
-    const mod = await import(abs(path));
-    const expanded = await loadTools(name, mod);
-    for (const [id, tool] of Object.entries(expanded.tools)) {
-      if (tools[id]) {
-        console.warn(`[openxyz] tool id "${id}" defined by multiple files, last one wins`);
+    try {
+      const mod = await import(abs(path));
+      const expanded = await loadTools(name, mod);
+      for (const [id, tool] of Object.entries(expanded.tools)) {
+        if (tools[id]) {
+          console.warn(`[openxyz] tool id "${id}" defined by multiple files, last one wins`);
+        }
+        tools[id] = tool;
       }
-      tools[id] = tool;
+      if (expanded.cleanup) cleanup.push(expanded.cleanup);
+    } catch (err) {
+      const reason = formatLoadError(err);
+      console.warn(`[openxyz] tools/${name} skipped: ${reason}`);
+      skipped.push({ kind: "tool", name, reason });
     }
-    if (expanded.cleanup) cleanup.push(expanded.cleanup);
   }
 
   // TODO: add a toggle so templates can opt out of shipped agents.
@@ -104,15 +117,23 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
         ? new URL("../../models/auto.ts", import.meta.url).pathname
         : undefined;
     if (!path) continue; // referenced but no source — surfaces clearly when an agent picks it
-    const mod = await import(path);
-    if (!mod.default) {
-      console.warn(`[openxyz] models/${name} has no default export, skipping`);
-      continue;
+    try {
+      const mod = await import(path);
+      if (!mod.default) {
+        const reason = "no default export";
+        console.warn(`[openxyz] models/${name} skipped: ${reason}`);
+        skipped.push({ kind: "model", name, reason });
+        continue;
+      }
+      // Convert the whole module — loadModel reads `default` (awaiting if
+      // it's a factory) plus optional `systemPrompt` / `limit` named
+      // exports. Runtime only sees the canonical `Model` wrapper.
+      models[name] = await loadModel(mod);
+    } catch (err) {
+      const reason = formatLoadError(err);
+      console.warn(`[openxyz] models/${name} skipped: ${reason}`);
+      skipped.push({ kind: "model", name, reason });
     }
-    // Convert the whole module — loadModel reads `default` (awaiting if
-    // it's a factory) plus optional `systemPrompt` / `limit` named
-    // exports. Runtime only sees the canonical `Model` wrapper.
-    models[name] = await loadModel(mod);
   }
 
   const skills: SkillDef[] = [];
@@ -131,15 +152,23 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
     "/workspace": new WorkspaceDrive(scan.cwd, "read-write"),
   };
   for (const [name, path] of Object.entries(t.drives)) {
-    const mod = await import(abs(path));
-    if (!mod.default) {
-      console.warn(`[openxyz] drives/${name} has no default export, skipping`);
-      continue;
+    try {
+      const mod = await import(abs(path));
+      if (!mod.default) {
+        const reason = "no default export";
+        console.warn(`[openxyz] drives/${name} skipped: ${reason}`);
+        skipped.push({ kind: "drive", name, reason });
+        continue;
+      }
+      drives[`/mnt/${name}`] = mod.default as Drive;
+    } catch (err) {
+      const reason = formatLoadError(err);
+      console.warn(`[openxyz] drives/${name} skipped: ${reason}`);
+      skipped.push({ kind: "drive", name, reason });
     }
-    drives[`/mnt/${name}`] = mod.default as Drive;
   }
 
-  return { cwd: scan.cwd, channels, tools, agents, models, drives, skills, "AGENTS.md": agentsMd, cleanup };
+  return { cwd: scan.cwd, channels, tools, agents, models, drives, skills, "AGENTS.md": agentsMd, cleanup, skipped };
 }
 
 /**

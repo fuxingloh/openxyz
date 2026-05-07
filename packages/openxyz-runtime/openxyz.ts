@@ -49,7 +49,70 @@ export type OpenXyzRuntime = {
    * so a slow or failing teardown never blocks the others.
    */
   cleanup?: Array<() => Promise<void>>;
+  /**
+   * Modules the loader couldn't attach — typically because their import-time
+   * side-effects threw (e.g. `env.X.toString()` on an unset var). Surfaced to
+   * the agent as the trailing `## Unavailable` section of the system prompt
+   * so it can self-explain when a user asks "why didn't you use the github
+   * tool?". Fail-soft: a missing module skips its slot, siblings keep working.
+   */
+  skipped?: Skipped[];
 };
+
+/**
+ * One entry in `OpenXyzRuntime.skipped` — a module that couldn't be attached.
+ * `kind` matches the template directory it came from. `reason` is intended
+ * for the **agent** to read in the system prompt — produced by
+ * `formatLoadError`, which keeps the error class name (`EnvNotFoundError`,
+ * `EnvParseError`, …), the message, and one level of cause chain. Enough
+ * for the agent to tell the user "you need to set `BRAIN_GH_TOKEN`" without
+ * having to ask follow-up questions. Loaders MUST go through `formatLoadError`
+ * so the surface stays uniform across dev (`openxyz start`) and the
+ * generated production entrypoint.
+ */
+export type Skipped = {
+  kind: "channel" | "tool" | "drive" | "model";
+  name: string;
+  reason: string;
+};
+
+/**
+ * Render a caught load-time error into a single line the agent can act on.
+ * Includes:
+ *   - class name when not generic `Error` (e.g. `EnvNotFoundError`,
+ *     `EnvParseError`, `TypeError`) — lets the agent distinguish "you forgot
+ *     to set an env" from "syntax error in the module"
+ *   - `.message` verbatim — `EnvNotFoundError` already encodes the key +
+ *     `.describe(...)` label, so this carries the env var name and what it's
+ *     for straight into the prompt
+ *   - one level of `.cause` (class + message) — common when a module wraps
+ *     a downstream failure (e.g. a vendor SDK throwing inside a constructor)
+ *
+ * Output is clamped at 800 chars so a pathologically long stack-trace-as-
+ * message can't blow the system prompt. The agent sees ~10–20 of these
+ * lines worst case; that's the budget.
+ *
+ * Stable single-line format. The system-prompt cache key depends on it —
+ * any change here invalidates every cached prefix that contains a
+ * `## Unavailable` block.
+ */
+export function formatLoadError(err: unknown): string {
+  const MAX = 800;
+  if (err instanceof Error) {
+    const head = err.name && err.name !== "Error" ? `${err.name}: ${err.message}` : err.message;
+    const cause = (err as { cause?: unknown }).cause;
+    let line = head;
+    if (cause instanceof Error) {
+      const cn = cause.name && cause.name !== "Error" ? `${cause.name}: ` : "";
+      line += ` (cause: ${cn}${cause.message})`;
+    } else if (cause !== undefined && cause !== null) {
+      line += ` (cause: ${String(cause)})`;
+    }
+    return line.length <= MAX ? line : line.slice(0, MAX - 1) + "…";
+  }
+  const s = String(err);
+  return s.length <= MAX ? s : s.slice(0, MAX - 1) + "…";
+}
 
 export class OpenXyz {
   readonly cwd: string;

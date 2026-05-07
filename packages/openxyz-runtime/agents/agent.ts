@@ -8,6 +8,7 @@ import {
 } from "ai";
 import { estimateTokens, type Channel, type Session, type Thread } from "../channels";
 import type { Model } from "../model";
+import type { Skipped } from "../openxyz";
 import type { SkillDef } from "../tools/skill";
 import type { AgentDef, AgentFactory } from "./factory";
 
@@ -245,6 +246,8 @@ export class Agent {
     skills: SkillDef[];
     /** Template-level `AGENTS.md` body. See `OpenXyzRuntime["AGENTS.md"]`. */
     "AGENTS.md"?: string;
+    /** Modules the loader couldn't attach. See `OpenXyzRuntime.skipped`. */
+    skipped?: Skipped[];
   }) {
     this.name = config.def.name;
     this.#factory = config.factory;
@@ -276,6 +279,7 @@ export class Agent {
           skills: config.skills,
           def: config.def,
           "AGENTS.md": config["AGENTS.md"],
+          skipped: config.skipped,
         }),
       },
       tools: config.tools,
@@ -569,6 +573,7 @@ export function buildSystemPrompt(config: {
   skills: SkillDef[];
   def: AgentDef;
   "AGENTS.md"?: string;
+  skipped?: Skipped[];
 }): string {
   const parts = [config.systemPrompt];
 
@@ -604,7 +609,43 @@ export function buildSystemPrompt(config: {
     parts.push(config.def.instructions);
   }
 
+  // Trailing — the agent reads "what's missing" last so it doesn't shape
+  // every response around the absence. Only emitted when something failed
+  // to load; an empty list means the template is healthy.
+  const skipped = config.skipped;
+  if (skipped && skipped.length > 0) {
+    parts.push(formatSkippedSection(skipped));
+  }
+
   return parts.join("\n\n");
+}
+
+/**
+ * Render the "## Unavailable" tail section. Grouped by `kind` so the agent
+ * can scan for "is `<x>` available?" without reading the full list. Names
+ * are sorted within each group for deterministic prompt-cache keys.
+ *
+ * Exported for testing — treat as internal.
+ */
+export function formatSkippedSection(skipped: Skipped[]): string {
+  const groups = new Map<Skipped["kind"], Skipped[]>();
+  for (const s of skipped) {
+    const list = groups.get(s.kind) ?? [];
+    list.push(s);
+    groups.set(s.kind, list);
+  }
+  const order: Skipped["kind"][] = ["channel", "tool", "drive", "model"];
+  const lines = ["## Unavailable", "", "These modules failed to load and are not available this session:"];
+  for (const kind of order) {
+    const list = groups.get(kind);
+    if (!list || list.length === 0) continue;
+    lines.push("");
+    lines.push(`### ${kind}s`);
+    for (const s of [...list].sort((a, b) => a.name.localeCompare(b.name))) {
+      lines.push(`- **${s.name}** — ${s.reason}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function formatSkillsXml(skills: SkillDef[]): string {

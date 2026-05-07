@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Adapter as ChatSdkAdapter, Message as ChatSdkMessage } from "chat";
 import { Channel, type Message, type ReplyAction, type Thread } from "./channels.ts";
-import { OpenXyz } from "./openxyz.ts";
+import { formatLoadError, OpenXyz } from "./openxyz.ts";
 
 class FakeChannel extends Channel {
   readonly adapter: ChatSdkAdapter = {
@@ -104,5 +104,46 @@ describe("OpenXyz.onMessage", () => {
     const replied = channel.reply.mock.calls.map((c) => c[1]);
     expect(replied).toContain(trigger);
     expect(replied).toContain(skipped);
+  });
+});
+
+describe("formatLoadError", () => {
+  test("includes class name and message for typed errors", () => {
+    class EnvNotFoundError extends Error {
+      override readonly name = "EnvNotFoundError";
+    }
+    const out = formatLoadError(new EnvNotFoundError("env BRAIN_GH_TOKEN is not set: GitHub token"));
+    expect(out).toBe("EnvNotFoundError: env BRAIN_GH_TOKEN is not set: GitHub token");
+  });
+
+  test("omits class name when generic Error", () => {
+    expect(formatLoadError(new Error("boom"))).toBe("boom");
+  });
+
+  test("appends a single level of cause when chained", () => {
+    class WrapperError extends Error {
+      override readonly name = "WrapperError";
+    }
+    class InnerError extends Error {
+      override readonly name = "InnerError";
+    }
+    const wrapped = new WrapperError("failed to construct GitHubDrive", {
+      cause: new InnerError("HTTP 401 from api.github.com"),
+    });
+    const out = formatLoadError(wrapped);
+    expect(out).toBe("WrapperError: failed to construct GitHubDrive (cause: InnerError: HTTP 401 from api.github.com)");
+  });
+
+  test("renders non-Error throws via String coercion", () => {
+    expect(formatLoadError("string error")).toBe("string error");
+    expect(formatLoadError(42)).toBe("42");
+    expect(formatLoadError({ toString: () => "obj" })).toBe("obj");
+  });
+
+  test("clamps absurdly long messages so the system prompt stays bounded", () => {
+    const long = "x".repeat(2000);
+    const out = formatLoadError(new Error(long));
+    expect(out.length).toBeLessThanOrEqual(800);
+    expect(out.endsWith("…")).toBe(true);
   });
 });

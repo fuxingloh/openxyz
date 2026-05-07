@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelMessage } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { Agent, buildSystemPrompt, hardTruncate, safeBoundary } from "./agent.ts";
+import { Agent, buildSystemPrompt, formatSkippedSection, hardTruncate, safeBoundary } from "./agent.ts";
 import type { AgentDef, AgentFactory } from "./factory.ts";
 import type { Model } from "../model.ts";
 
@@ -306,5 +306,51 @@ describe("buildSystemPrompt", () => {
       "AGENTS.md": "agents-body",
     });
     expect(out.indexOf("BASELINE_MARKER")).toBeLessThan(out.indexOf("## AGENTS.md"));
+  });
+
+  test("emits no Unavailable section when skipped is absent or empty", () => {
+    expect(buildSystemPrompt(baseConfig)).not.toContain("## Unavailable");
+    expect(buildSystemPrompt({ ...baseConfig, skipped: [] })).not.toContain("## Unavailable");
+  });
+
+  test("renders Unavailable section last, after instructions", () => {
+    const out = buildSystemPrompt({
+      ...baseConfig,
+      def: defOf("test", { instructions: "INSTRUCTIONS_MARKER" }),
+      skipped: [{ kind: "tool", name: "github", reason: "env GITHUB_TOKEN is not set" }],
+    });
+    expect(out).toContain("## Unavailable");
+    expect(out).toContain("**github**");
+    expect(out).toContain("env GITHUB_TOKEN is not set");
+    expect(out.indexOf("INSTRUCTIONS_MARKER")).toBeLessThan(out.indexOf("## Unavailable"));
+    expect(out.indexOf("## Environment")).toBeLessThan(out.indexOf("## Unavailable"));
+  });
+});
+
+describe("formatSkippedSection", () => {
+  test("groups by kind in fixed order, sorts names within group", () => {
+    const out = formatSkippedSection([
+      { kind: "tool", name: "zeta", reason: "r1" },
+      { kind: "channel", name: "telegram", reason: "r2" },
+      { kind: "tool", name: "alpha", reason: "r3" },
+      { kind: "drive", name: "notes", reason: "r4" },
+    ]);
+    // Section header order: channels → tools → drives → models
+    const channelsIdx = out.indexOf("### channels");
+    const toolsIdx = out.indexOf("### tools");
+    const drivesIdx = out.indexOf("### drives");
+    expect(channelsIdx).toBeGreaterThan(-1);
+    expect(toolsIdx).toBeGreaterThan(channelsIdx);
+    expect(drivesIdx).toBeGreaterThan(toolsIdx);
+    // Names sorted within tools group
+    expect(out.indexOf("**alpha**")).toBeLessThan(out.indexOf("**zeta**"));
+  });
+
+  test("omits empty groups", () => {
+    const out = formatSkippedSection([{ kind: "tool", name: "x", reason: "r" }]);
+    expect(out).toContain("### tools");
+    expect(out).not.toContain("### channels");
+    expect(out).not.toContain("### drives");
+    expect(out).not.toContain("### models");
   });
 });
