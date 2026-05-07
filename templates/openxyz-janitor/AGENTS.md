@@ -93,6 +93,16 @@ Two tables back structured tracking. Table names below are what the `nocodb_getT
 
 Prefer these over free-form markdown when the data is record-shaped. Free-form notes still live in `/mnt/documents/` — the two are complementary.
 
+## Reference shorthand
+
+The team uses prefixes to disambiguate numbered references:
+
+- `mnemonic/123` or `m/123` → mnemonic note at `/mnt/mnemonic/123-*.md`
+- `Link 123` or `link/123` → NocoDB **Links** record (`Id = 123`)
+- A bare number (e.g. "check 123") is ambiguous — ask which dataset they mean before acting.
+
+If the user pastes or asks for "a link" without a prefix, assume they mean a NocoDB **Links** record.
+
 ## Link capture
 
 When the user pastes a URL — with or without context — treat it as a capture request. Load the `link-capture` skill (`skill({ name: "link-capture" })`) and follow it. Don't ask what they want first; a bare URL is the signal.
