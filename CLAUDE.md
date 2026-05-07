@@ -183,6 +183,10 @@ Write tests as you implement features. Not after. Not "if there's time." If the 
 
 **For AI SDK / chat-sdk / external integration points**, mock at the narrowest interface you can (e.g. `MockLanguageModelV3.doGenerate` over full stream mocking). Heavy mocks are a smell — they usually mean the seam is wrong. If the setup balloons, consider whether the unit under test should be smaller.
 
+**No noise mocks. Mocks must pay rent.** Every `mock()` should back at least one assertion on its call record (`toHaveBeenCalledWith`, `.mock.calls[…]`, etc.). Don't mock a method just to assert `not.toHaveBeenCalled()` on it — that's testing the absence of a side effect by introducing the side effect's machinery. If you want to prove a code path was skipped, intercept the _actual decision boundary_ (e.g. `openxyz.dispatch` for "did the agent run") and assert on that one seam. Plain async stubs (`async () => []`) are the right way to satisfy abstract methods you don't care about; reach for `mock()` only when you'll inspect it.
+
+**Don't widen the public API for test access.** Exporting a constant, helper, or regex purely so a test can import it is a code smell — the production surface now has a load-bearing entry that exists only for tests. Either test through the real public seam (the function that uses the constant), or live with the test asserting behaviour rather than identity. The `// Exported for testing — treat as internal.` escape hatch above is for module-private _helpers_ with non-trivial logic, not for inlined literals.
+
 When you can't reasonably test something (streaming integration, cross-process coordination, external APIs), say so in the PR — don't pretend it's covered. Write a followup task instead.
 
 ## Working style

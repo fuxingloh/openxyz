@@ -110,8 +110,13 @@ export class OpenXyz {
     chat.onSubscribedMessage((thread, message, context) => this.onMessage(thread, message, context));
     // Catch-all — fires for unsubscribed non-DM non-mention messages
     // (typically random group chatter). `channel.reply()` returning `{}`
-    // stays silent.
-    chat.onNewMessage(/.+/, (thread, message, context) => this.onMessage(thread, message, context));
+    // stays silent. `/[\s\S]*/` matches empty strings too — Telegram media-
+    // only messages (photo/voice/sticker without caption) parse to `text=""`,
+    // and `/.+/` would silently drop them at chat-sdk's tier dispatch. That
+    // left a new forum topic unsubscribed (OXYZ-91): once any message reaches
+    // `onMessage`, `thread.subscribe()` runs and subsequent messages flow
+    // through `onSubscribedMessage`.
+    chat.onNewMessage(/[\s\S]*/, (thread, message, context) => this.onMessage(thread, message, context));
 
     await chat.initialize();
     this.#chat = chat;
