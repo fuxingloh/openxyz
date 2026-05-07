@@ -141,6 +141,7 @@
     "templates/openbrain": {
       "name": "openbrain",
       "dependencies": {
+        "@openxyz-provider/github": "workspace:*",
         "openxyz": "workspace:*",
       },
       "devDependencies": {

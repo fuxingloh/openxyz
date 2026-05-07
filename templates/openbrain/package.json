@@ -6,6 +6,7 @@
     "start": "openxyz start"
   },
   "dependencies": {
+    "@openxyz-provider/github": "workspace:*",
     "openxyz": "workspace:*"
   },
   "devDependencies": {
