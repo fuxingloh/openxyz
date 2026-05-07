@@ -103,6 +103,8 @@ The team uses prefixes to disambiguate numbered references:
 
 If the user pastes or asks for "a link" without a prefix, assume they mean a NocoDB **Links** record.
 
+When two numbered references disagree, the higher-numbered (or more recently updated) one wins — assume it's the latest information. Mnemonic notes are append-only and numbered sequentially, so a later note supersedes an earlier one on the same topic; same goes for NocoDB records by `UpdatedAt`.
+
 ## Link capture
 
 When the user pastes a URL — with or without context — treat it as a capture request. Load the `link-capture` skill (`skill({ name: "link-capture" })`) and follow it. Don't ask what they want first; a bare URL is the signal.
