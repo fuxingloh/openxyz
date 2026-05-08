@@ -47,9 +47,11 @@ export type Registry = Record<string, ModelLimit>;
 export const SUPPORTED_PROVIDERS = ["amazon-bedrock", "openrouter", "vercel", "opencode"] as const;
 
 /**
- * Union derived from `SUPPORTED_PROVIDERS`. Imported by `auto.ts` to drive
- * exhaustive provider dispatch — adding a key here + forgetting to wire it
- * into auto's switch becomes a compile error.
+ * Union derived from `SUPPORTED_PROVIDERS`. Used by the prefetch path to
+ * filter models.dev. The shipped `auto.ts` only dispatches a subset
+ * (currently amazon-bedrock + openrouter, statically imported); other
+ * entries here are still consumable directly via `models/<name>.ts`
+ * imports of the per-provider files.
  */
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 

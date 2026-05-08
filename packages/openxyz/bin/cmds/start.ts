@@ -120,11 +120,7 @@ async function loadRuntime(scan: OpenXyzFiles): Promise<OpenXyzRuntime> {
 
   const models: Record<string, Model> = {};
   for (const name of used) {
-    const path = t.models[name]
-      ? abs(t.models[name]!)
-      : name === "auto"
-        ? new URL("../../models/auto.ts", import.meta.url).pathname
-        : undefined;
+    const path = t.models[name] ? abs(t.models[name]!) : undefined;
     if (!path) continue; // referenced but no source — surfaces clearly when an agent picks it
     try {
       const mod = await import(path);

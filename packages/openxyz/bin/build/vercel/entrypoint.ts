@@ -27,9 +27,6 @@ export async function generateEntrypoint(
     const r = relative(buildDir, p);
     return r.startsWith(".") ? r : "./" + r;
   };
-  // Path to openxyz's shipped `models/auto.ts` on the build machine.
-  // Injected when no template-provided `models/auto.ts` exists.
-  const shippedAuto = new URL("../../../models/auto.ts", import.meta.url).pathname;
   const t = scan.template;
 
   // Merge shipped + template agents; template wins on name collision.
@@ -79,14 +76,12 @@ export async function generateEntrypoint(
     driveDynamic.push({ name, rel: toRel(abs(path)) });
   });
 
-  // Models: dynamic imports too, same soft-load reasoning as channels/tools/
-  // drives. `auto` is always referenced (agents without explicit `model:` fall
-  // back to it), so if the template doesn't override `models/auto.ts`, point at
-  // openxyz's shipped one. Factory exports (e.g. `auto.ts` that switches on
-  // `OPENXYZ_MODEL`) are resolved at boot time on the deployed function.
+  // Models: dynamic imports, same soft-load reasoning as channels/tools/drives.
+  // `models/auto.ts` is required by `scanDir` — every template implements it.
+  // Factory exports are resolved at boot time on the deployed function.
   const modelDynamic: Array<{ name: string; rel: string }> = [];
   for (const name of usedModels) {
-    const path = t.models[name] ? abs(t.models[name]!) : name === "auto" ? shippedAuto : undefined;
+    const path = t.models[name] ? abs(t.models[name]!) : undefined;
     if (!path) continue; // referenced but no source — agent picking it surfaces clearly at runtime
     modelDynamic.push({ name, rel: toRel(path) });
   }

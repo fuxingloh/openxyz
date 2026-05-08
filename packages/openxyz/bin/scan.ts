@@ -56,6 +56,16 @@ export async function scanDir(cwd: string): Promise<OpenXyzFiles> {
     console.warn(`[openxyz] "${entry}" not loaded — only AGENTS.md is injected into the system prompt`);
   }
 
+  if (!models["auto"]) {
+    throw new Error(
+      "missing required file: models/auto.ts\n" +
+        '  The shipped default agents (auto, explore, research, compact) reference `model: "auto"`.\n' +
+        "  Create models/auto.ts with a `default` export that returns a LanguageModel,\n" +
+        '  e.g. dispatch on OPENXYZ_MODEL or `export default anthropic("claude-sonnet-4-5")`.\n' +
+        "  See templates/openxyz-janitor/models/auto.ts for a reference implementation.",
+    );
+  }
+
   return {
     cwd,
     template: { channels, tools, agents, models, drives, skills, "AGENTS.md": agentsMdPath },

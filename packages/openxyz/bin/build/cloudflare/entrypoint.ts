@@ -29,7 +29,6 @@ export async function generateEntrypoint(
     const r = relative(buildDir, p);
     return r.startsWith(".") ? r : "./" + r;
   };
-  const shippedAuto = new URL("../../../models/auto.ts", import.meta.url).pathname;
   const t = scan.template;
 
   const mergedAgents: Array<{ name: string; path: string }> = [];
@@ -63,7 +62,7 @@ export async function generateEntrypoint(
 
   const modelDynamic: Array<{ name: string; rel: string }> = [];
   for (const name of usedModels) {
-    const path = t.models[name] ? abs(t.models[name]!) : name === "auto" ? shippedAuto : undefined;
+    const path = t.models[name] ? abs(t.models[name]!) : undefined;
     if (!path) continue;
     modelDynamic.push({ name, rel: toRel(path) });
   }

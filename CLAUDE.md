@@ -93,7 +93,7 @@ my-template/
 ├── skills/                   # custom skills (optional)
 │   └── my-skill/SKILL.md
 ├── agents/                   # custom agents (optional)
-└── models/                   # custom model providers (optional; falls back to openxyz's `auto.ts`)
+└── models/                   # model providers — `models/auto.ts` required (template implements; no shipped fallback)
 ```
 
 Filename = identity:
