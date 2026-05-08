@@ -304,6 +304,21 @@ export class OpenXyz {
     );
 
     await this.dispatch({ thread, channel, messages });
+
+    // High-water mark for the next turn's `recentMessages` walk (mnemonic/106
+    // — OXYZ-91 fix). After a successful dispatch, mark the newest incoming
+    // message id so subsequent triggers stop the backfill walk here instead
+    // of at the bot's most recent reply. Without this, a `reply: false` user
+    // message arriving between r1 and the next trigger would be invisible to
+    // the agent — older than the trigger, newer than the bot reply. Only set
+    // on dispatch success: an unhandled throw means the agent never saw any
+    // of `incoming`, so the marker shouldn't advance.
+    const newest = incoming[incoming.length - 1]?.id;
+    if (newest) {
+      await thread
+        .setState({ lastDispatchedMessageId: newest })
+        .catch((err) => console.warn("[openxyz] setState lastDispatchedMessageId failed", err));
+    }
   }
 
   /**

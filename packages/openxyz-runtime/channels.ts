@@ -4,6 +4,16 @@ import type { Thread as ChatSdkThread, Message as ChatSdkMessage, Adapter as Cha
 export type Thread = ChatSdkThread<{
   /** Full agent-loop log — the session ledger (mnemonic/081). */
   session?: ModelMessage[];
+  /**
+   * Newest message id the agent saw in the last successful dispatch on this
+   * thread (the high-water mark of `incoming`, post-sort). `recentMessages`
+   * walks back to — but excludes — this id when assembling prior context, so
+   * any `reply: false` user message that arrived between the bot's last reply
+   * and the next trigger gets backfilled. Without this marker the walk stops
+   * at the bot's most recent message and silently drops anything newer than
+   * the bot's reply but older than the trigger (mnemonic/106 — OXYZ-91).
+   */
+  lastDispatchedMessageId?: string;
 }>;
 
 export type Message<Raw = unknown> = ChatSdkMessage<Raw>;
@@ -192,13 +202,24 @@ export abstract class Channel<Raw = unknown> {
    * agent sees "fix that" with no antecedent.
    *
    * Default: walk `thread.recentMessages` newest → oldest, skip ids already
-   * in `incoming` (the current burst — already in the prompt path), stop at
-   * the first message authored by this bot (`author.isMe`) or at
-   * `RECENT_MESSAGES_CAP`. Each candidate runs through `this.reply()` and is
-   * dropped if the policy returns `context: false` — so the same allowlist /
-   * permission logic that gated the message originally still applies on
-   * cache-walk (mnemonic/091). Refreshes once if the cache is empty (cold
-   * start). Returns chronological order.
+   * in `incoming` (the current burst — already in the prompt path). Boundary
+   * is `thread.state.lastDispatchedMessageId` when set — the high-water mark
+   * of the previous successful dispatch; everything older is in the session
+   * already. Bot messages along the way are skipped (already in session) but
+   * don't terminate the walk — that's the OXYZ-91 fix: a `reply: false` user
+   * message arriving between the bot's last reply and the next trigger sat
+   * newer than the bot reply but older than the trigger, and the legacy
+   * bot-stop walked right past it.
+   *
+   * Cold-start (no marker yet) falls back to the legacy bot-stop so existing
+   * threads behave as before until a triggered turn writes the marker.
+   *
+   * Hard cap at `RECENT_MESSAGES_CAP` either way. Each candidate runs
+   * through `this.reply()` and is dropped if the policy returns
+   * `context: false` — so the same allowlist / permission logic that gated
+   * the message originally still applies on cache-walk (mnemonic/091).
+   * Refreshes once if the cache is empty (cold start). Returns chronological
+   * order.
    *
    * `reply()` must be a pure policy decision (no side effects) — backfill
    * re-invokes it on historical messages. Tight cap and bot-cut keep the
@@ -215,12 +236,30 @@ export abstract class Channel<Raw = unknown> {
     }
     if (recent.length === 0) return [];
 
+    const state = await thread.state.catch((err) => {
+      console.warn("[openxyz] recentMessages: thread.state read failed", err);
+      return null;
+    });
+    const marker = state?.lastDispatchedMessageId;
+
     const incomingIds = new Set(incoming.map((m) => m.id));
     const candidates: Message<Raw>[] = [];
     for (let i = recent.length - 1; i >= 0; i--) {
       const m = recent[i]!;
       if (incomingIds.has(m.id)) continue;
-      if (m.author.isMe) break;
+      if (marker !== undefined) {
+        // Marker mode (post-OXYZ-91): boundary is the previous dispatch's
+        // high-water mark. Bot messages are already in the session log, so
+        // skip them but keep walking — the user message we're hunting for
+        // may be older than the bot reply but newer than the marker.
+        if (m.id === marker) break;
+        if (m.author.isMe) continue;
+      } else {
+        // Cold-start fallback (no marker yet): legacy bot-stop. Preserves
+        // pre-OXYZ-91 behavior for the first dispatch on existing threads;
+        // marker is set after this turn so subsequent walks are correct.
+        if (m.author.isMe) break;
+      }
       candidates.push(m);
       if (candidates.length >= RECENT_MESSAGES_CAP) break;
     }

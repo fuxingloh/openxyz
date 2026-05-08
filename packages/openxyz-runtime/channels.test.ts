@@ -316,13 +316,22 @@ function chatMsg(opts: { id: string; isMe: boolean; dateSent?: number; text?: st
   } as unknown as Message;
 }
 
-function makeThreadWithRecent(recent: Message[]): Thread {
+function makeThreadWithRecent(recent: Message[], opts: { lastDispatchedMessageId?: string } = {}): Thread {
   let refreshes = 0;
+  let state: { lastDispatchedMessageId?: string } | null = opts.lastDispatchedMessageId
+    ? { lastDispatchedMessageId: opts.lastDispatchedMessageId }
+    : null;
   const thread = {
     id: "t",
     recentMessages: recent,
     refresh: async () => {
       refreshes++;
+    },
+    get state(): Promise<{ lastDispatchedMessageId?: string } | null> {
+      return Promise.resolve(state);
+    },
+    async setState(next: { lastDispatchedMessageId?: string }): Promise<void> {
+      state = { ...(state ?? {}), ...next };
     },
     get _refreshes() {
       return refreshes;
@@ -347,7 +356,7 @@ describe("Channel.backfill", () => {
     expect((thread as unknown as { _refreshes: number })._refreshes).toBe(1);
   });
 
-  test("walks back to last bot message and stops there", async () => {
+  test("cold-start fallback (no marker) — walks back to last bot message and stops there", async () => {
     // recent (chronological): bot1 — u1 — u2 — bot2 — u3 — u4 (incoming)
     const recent = [
       chatMsg({ id: "bot1", isMe: true, dateSent: 1 }),
@@ -361,6 +370,70 @@ describe("Channel.backfill", () => {
     const ch = new TestChannel();
     const res = await ch.recentMessages(makeThreadWithRecent(recent), incoming);
     expect(res.map((m) => m.id)).toEqual(["u3"]);
+  });
+
+  test("marker mode — boundary is lastDispatchedMessageId, not the most recent bot message", async () => {
+    // OXYZ-91 scenario:
+    //   u1 (reply: true)  → dispatched, marker = u1
+    //   u2 (reply: false) → no dispatch
+    //   bot1              → reply to u1
+    //   u3 (reply: true)  → trigger NOW. Walking back from u3 must include u2.
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "bot1", isMe: true, dateSent: 3 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 4 }),
+    ];
+    const incoming = [chatMsg({ id: "u3", isMe: false, dateSent: 4 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent, { lastDispatchedMessageId: "u1" }), incoming);
+    // Without the OXYZ-91 fix this would be [] (bot-stop swallows u2).
+    expect(res.map((m) => m.id)).toEqual(["u2"]);
+  });
+
+  test("marker mode — multiple reply:false messages between bot turns all backfill", async () => {
+    // u1 dispatched (marker = u1), then a longer silence: u2/u3 dropped as
+    // reply:false, bot1 mid-stream, u4 dropped, u5 triggers. All three
+    // user messages newer than u1 should reach the agent.
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "bot1", isMe: true, dateSent: 3 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 4 }),
+      chatMsg({ id: "u4", isMe: false, dateSent: 5 }),
+      chatMsg({ id: "u5", isMe: false, dateSent: 6 }),
+    ];
+    const incoming = [chatMsg({ id: "u5", isMe: false, dateSent: 6 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent, { lastDispatchedMessageId: "u1" }), incoming);
+    expect(res.map((m) => m.id)).toEqual(["u2", "u3", "u4"]);
+  });
+
+  test("marker mode — marker missing from recent cache falls through to cap", async () => {
+    // marker points to a message no longer in the cache (e.g. cache truncated
+    // past it). Walk should not loop forever — cap at RECENT_MESSAGES_CAP.
+    const recent = Array.from({ length: 20 }, (_, i) => chatMsg({ id: `u${i}`, isMe: false, dateSent: i }));
+    const incoming = [chatMsg({ id: "u19", isMe: false, dateSent: 19 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent, { lastDispatchedMessageId: "missing" }), incoming);
+    expect(res.length).toBe(10);
+    expect(res[res.length - 1]?.id).toBe("u18");
+  });
+
+  test("marker mode — bot messages encountered while walking are skipped, not included", async () => {
+    // Guards against bot messages leaking into `prior` (they're already in
+    // session). marker = u1 is far enough back to force bot1 into the walk.
+    const recent = [
+      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
+      chatMsg({ id: "u2", isMe: false, dateSent: 2 }),
+      chatMsg({ id: "bot1", isMe: true, dateSent: 3 }),
+      chatMsg({ id: "u3", isMe: false, dateSent: 4 }),
+      chatMsg({ id: "trigger", isMe: false, dateSent: 5 }),
+    ];
+    const incoming = [chatMsg({ id: "trigger", isMe: false, dateSent: 5 })];
+    const ch = new TestChannel();
+    const res = await ch.recentMessages(makeThreadWithRecent(recent, { lastDispatchedMessageId: "u1" }), incoming);
+    expect(res.map((m) => m.id)).toEqual(["u2", "u3"]);
   });
 
   test("excludes burst messages even when present in recent cache", async () => {

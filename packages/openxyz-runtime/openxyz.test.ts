@@ -21,6 +21,7 @@ class FakeChannel extends Channel {
 }
 
 function makeThread(): Thread {
+  let state: { lastDispatchedMessageId?: string } | null = null;
   return {
     id: "fake:-1003901611420:274",
     adapter: {
@@ -31,6 +32,12 @@ function makeThread(): Thread {
     refresh: async () => {},
     subscribe: mock(async () => {}),
     startTyping: mock(async () => {}),
+    get state(): Promise<{ lastDispatchedMessageId?: string } | null> {
+      return Promise.resolve(state);
+    },
+    setState: mock(async (next: { lastDispatchedMessageId?: string }) => {
+      state = { ...(state ?? {}), ...next };
+    }),
   } as unknown as Thread;
 }
 
@@ -89,6 +96,39 @@ describe("OpenXyz.onMessage", () => {
     expect(openxyz.dispatch).toHaveBeenCalledTimes(1);
     const dispatchArg = openxyz.dispatch.mock.calls[0]?.[0] as { messages: ModelMessage[] };
     expect(dispatchArg.messages).toHaveLength(1);
+  });
+
+  test("dispatch success advances thread.state.lastDispatchedMessageId to newest in burst (mnemonic/106)", async () => {
+    // OXYZ-91 marker write: after a successful dispatch, the high-water mark
+    // moves to the newest message id we processed. The next turn's
+    // recentMessages walk uses this as the boundary instead of bot-stop.
+    const channel = new FakeChannel();
+    channel.reply = mock(async () => ({ reply: true }));
+    const openxyz = makeOpenXyz(channel);
+    const thread = makeThread();
+    const skipped = makeMessage("first", "-1003901611420:274", new Date(1000));
+    const trigger = makeMessage("second", "-1003901611420:275", new Date(2000));
+
+    await openxyz.onMessage(thread, trigger, { skipped: [skipped], totalSinceLastHandler: 2 });
+
+    expect((thread.setState as ReturnType<typeof mock>).mock.calls).toContainEqual([
+      { lastDispatchedMessageId: "-1003901611420:275" },
+    ]);
+    expect((await thread.state)?.lastDispatchedMessageId).toBe("-1003901611420:275");
+  });
+
+  test("no-reply burst does not advance lastDispatchedMessageId", async () => {
+    // Marker only advances on actual dispatch — keeps reply:false messages
+    // available for backfill on the next triggered turn.
+    const channel = new FakeChannel(); // default reply: false
+    const openxyz = makeOpenXyz(channel);
+    const thread = makeThread();
+
+    await openxyz.onMessage(thread, makeMessage("hi"));
+
+    expect(openxyz.dispatch).not.toHaveBeenCalled();
+    expect(thread.setState as ReturnType<typeof mock>).not.toHaveBeenCalled();
+    expect(await thread.state).toBeNull();
   });
 
   test("burst with empty trigger still routes every message through reply()", async () => {
