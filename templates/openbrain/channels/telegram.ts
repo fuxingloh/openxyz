@@ -1,4 +1,4 @@
-import { Message, type ReplyAction, TelegramChannel, type TelegramRaw, Thread } from "openxyz/channels/telegram";
+import { Message, type ReplyAction, TelegramChannel, type TelegramRaw, type Thread } from "openxyz/channels/telegram";
 import { env } from "openxyz/env";
 
 const userAllowlist = env.TELEGRAM_ALLOWLIST.describe(
@@ -35,30 +35,31 @@ export default new TelegramChannel({
 });
 
 /**
- * Decides which messages enter the thread history at all. Bot's own messages
- * must pass so the agent sees its prior turns; everyone else is allowlist-gated.
- * In groups, the group itself must also be allowlisted.
- */
-export function filter(message: Message<TelegramRaw>, thread: Thread) {
-  const botUserId = (thread.adapter as { botUserId?: string }).botUserId;
-  if (botUserId && message.author.userId === botUserId) return true;
-  if (!userAllowlist.has(message.author.userId)) return false;
-  // `thread.channel.id` is chat-sdk's `telegram:<chatId>` form; the env
-  // allowlist holds the bare Telegram chat IDs users see in the app, so go
-  // through `message.raw.chat.id` to compare apples-to-apples.
-  if (!thread.isDM && !groupAllowlist.has(String(message.raw.chat.id))) return false;
-  return true;
-}
-
-/**
- * DMs always reply. Allowlisted groups are trusted spaces — the bot replies
- * to every allowlisted user there without needing a mention. Returning a
+ * Single policy gate — runs both for fresh messages and for recent-message
+ * backfill (`Channel.recentMessages` in `@openxyz/runtime/channels.ts`),
+ * so `context: false` here also keeps strangers out of the backfill prompt.
+ *
+ * Allowlisted groups are trusted spaces — the bot replies to every
+ * allowlisted user there without needing a mention. Returning a
  * `ReplyAction` directly bypasses `TelegramChannel.reply`'s default
  * group-dispatch (which requires `@mention` or reply-to-bot).
+ *
+ * `message.raw.chat.id` is the bare Telegram chat ID (negative for groups);
+ * `thread.channel.id` is chat-sdk's `telegram:<chatId>` form, so go through
+ * raw to compare with the env allowlist.
  */
 export async function reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
-  if (!userAllowlist.has(message.author.userId)) return { reply: false };
-  if (thread.isDM) return { reply: true };
-  if (!groupAllowlist.has(String(message.raw.chat.id))) return { reply: false };
-  return { reply: true };
+  if (thread.isDM) {
+    // In DM, only allowed user.
+    if (userAllowlist.has(message.author.userId)) return { reply: true };
+    return { reply: false };
+  }
+  // In Whitelisted Group, anyone
+  if (groupAllowlist.has(String(message.raw.chat.id))) {
+    return { reply: true };
+  }
+  // Non-whitelisted Group, only allowlisted user
+  if (userAllowlist.has(message.author.userId)) return { reply: true };
+  // But context will be added
+  return { reply: false, context: true };
 }
