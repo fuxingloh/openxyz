@@ -138,13 +138,6 @@ export abstract class Channel<Raw = unknown> {
   abstract reply(thread: Thread, message: Message<Raw>): Promise<ReplyAction>;
 
   /**
-   * Optional message-level predicate. Concrete adapters' `context()` should
-   * drop messages where this returns `false`. Adapter-agnostic shape —
-   * templates override it to scope context (e.g. brain-in-a-group filtering).
-   */
-  filter?(message: Message<Raw>, thread: Thread): boolean;
-
-  /**
    * Return the `Session` the agent should read/write for this incoming
    * message. Default is thread-scoped — one session per chat-sdk thread.
    * Adapters that want channel-scoped sessions (supergroup forum topics
@@ -283,8 +276,6 @@ export abstract class Channel<Raw = unknown> {
  * we're fixing. Start at 10; widen if real traffic shows the cap is biting.
  */
 const RECENT_MESSAGES_CAP = 10;
-
-export type MessageFilter<Raw = unknown> = (message: Message<Raw>, thread: Thread) => boolean;
 
 export type ReplyFunc<Raw = unknown> = (
   thread: Thread,
