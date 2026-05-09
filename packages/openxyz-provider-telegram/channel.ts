@@ -169,7 +169,7 @@ export class TelegramChannel extends Channel<TelegramRaw> {
             type: "file",
             data: `data:${att.mimeType};base64,${buf.toString("base64")}`,
             mediaType: att.mimeType!,
-            ...(att.name ? { filename: att.name } : {}),
+            ...(att.name ? { filename: sanitizeDocumentName(att.name) } : {}),
           });
         }
         if (built.length > 0) extraParts.set(msg.id, built);
@@ -493,6 +493,23 @@ const INLINE_FILE_MIMETYPES = new Set(["application/pdf"]);
 
 function isInlineFileType(att: { type: string; mimeType?: string }): boolean {
   return att.type === "file" && !!att.mimeType && INLINE_FILE_MIMETYPES.has(att.mimeType);
+}
+
+/**
+ * Bedrock Converse rejects document filenames containing anything outside
+ * `[a-zA-Z0-9 \-()\[\]]` or with consecutive whitespace ("report.pdf" 400s
+ * because of the dot). Anthropic's direct Messages API has no such rule —
+ * the wrap is Bedrock-only — but we deploy on Bedrock so the strict shape
+ * wins. Strip the extension and any non-ASCII; the model sees mediaType
+ * separately, so losing the `.pdf` suffix is harmless. Empty / fully-stripped
+ * names fall back to `"document"` (e.g. all-CJK filenames).
+ */
+function sanitizeDocumentName(name: string): string {
+  const cleaned = name
+    .replace(/[^a-zA-Z0-9 \-()[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "document";
 }
 
 function appendParts(aiMsg: AiMessage, extras: AiMessagePart[]): AiMessage {
