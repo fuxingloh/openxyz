@@ -11,12 +11,12 @@ import {
 import type { MdastTable, Root } from "chat";
 import type { Adapter as ChatSdkAdapter } from "chat";
 import type { ModelMessage, SystemModelMessage } from "ai";
-import { Channel, Session, type ReplyAction, type Thread } from "@openxyz/runtime/channels";
+import { Channel, Session, type Thread } from "@openxyz/runtime/channels";
 import { platform } from "@openxyz/runtime/platform";
 import { renderTablePng } from "./render-table";
 import { splitOnFinishStep } from "./split-stream";
 
-export type { Thread, Message, ReplyAction } from "@openxyz/runtime/channels";
+export type { Thread, Message } from "@openxyz/runtime/channels";
 export { Channel } from "@openxyz/runtime/channels";
 
 export type TelegramConfig = TelegramAdapterConfig & {
@@ -32,10 +32,10 @@ export type TelegramConfig = TelegramAdapterConfig & {
 };
 
 /**
- * Concrete Telegram `Channel`. Templates typically subclass this and
- * override `reply()` (and optionally `filter()`), then `export default new
- * SubclassName(opts)`. Call `super.reply(thread, message)` to defer to this
- * class's default dispatch once your gate checks pass.
+ * Concrete Telegram `Channel`. Templates typically `export default new
+ * TelegramChannel(...)` plus an `export function reply(...)` sibling that
+ * implements the policy. Subclass + `super.reply(...)` is also supported
+ * if a template wants to compose with this class's default dispatch.
  */
 export class TelegramChannel extends Channel<TelegramRaw> {
   readonly adapter: ChatSdkAdapter;
@@ -111,7 +111,13 @@ export class TelegramChannel extends Channel<TelegramRaw> {
 
       const raw = msg.raw as TelegramRaw | undefined;
       const parts: string[] = [];
-      if (atts.length > 0) parts.push(atts.map((a) => `[attached ${a.type}]`).join(" "));
+      if (atts.length > 0) {
+        parts.push(
+          atts
+            .map((a) => (a.type === "file" && a.name ? `[attached file ${a.name}]` : `[attached ${a.type}]`))
+            .join(" "),
+        );
+      }
       if (raw?.venue) {
         const v = raw.venue;
         const addr = v.address ? ` (${v.address})` : "";
@@ -137,9 +143,46 @@ export class TelegramChannel extends Channel<TelegramRaw> {
       (msg as { text: string }).text = parts.join(" ");
     }
 
+    // mnemonic/170 — chat-sdk's `attachmentToPart` only emits a `FilePart`
+    // for `att.type === "file"` whose mimeType matches `isTextMimeType`
+    // (`ai.ts:122`). PDFs (`application/pdf`) and every other binary
+    // document are silently dropped — `onUnsupportedAttachment` doesn't
+    // even fire because that path is reserved for `video`/`audio`. Anthropic
+    // / Bedrock / Gemini / GPT-4o all accept inline PDFs as AI SDK FilePart
+    // with `mediaType: "application/pdf"`, so we bypass chat-sdk and emit
+    // the part ourselves. Pre-fetched here in parallel; injected into the
+    // matching AiMessage inside `transformMessage`. Upstream OXYZ-103;
+    // model-capability follow-up (Office/non-PDF-native models) is OXYZ-104.
+    const extraParts = new Map<string, AiMessagePart[]>();
+    await Promise.all(
+      messages.map(async (msg) => {
+        const built: AiMessagePart[] = [];
+        for (const att of msg.attachments ?? []) {
+          if (!isInlineFileType(att)) continue;
+          if (!att.fetchData) continue;
+          const buf = await att.fetchData().catch((err) => {
+            console.warn(`[telegram] inline-file fetchData failed for ${att.name ?? att.type} — skipping`, err);
+            return null;
+          });
+          if (!buf) continue;
+          built.push({
+            type: "file",
+            data: `data:${att.mimeType};base64,${buf.toString("base64")}`,
+            mediaType: att.mimeType!,
+            ...(att.name ? { filename: att.name } : {}),
+          });
+        }
+        if (built.length > 0) extraParts.set(msg.id, built);
+      }),
+    );
+
     const result = await toAiMessages(messages, {
       includeNames: !thread.isDM,
-      transformMessage: (aiMsg, src) => annotate(aiMsg, src, botUserId),
+      transformMessage: (aiMsg, src) => {
+        const annotated = annotate(aiMsg, src, botUserId);
+        const extras = extraParts.get(src.id);
+        return extras ? appendParts(annotated, extras) : annotated;
+      },
     });
     return result as ModelMessage[];
   }
@@ -274,15 +317,13 @@ export class TelegramChannel extends Channel<TelegramRaw> {
 
   /**
    * Default dispatch: respond to DMs, respond in groups only when @-mentioned
-   * or replied-to. Templates with allowlists typically check the allowlist
-   * first and then `return super.reply(thread, message)` to reuse this.
+   * or replied-to. Templates with allowlists typically write their own
+   * `reply` sibling export (no fall-through) and don't reuse this. Group
+   * ack reaction (👀) is auto-injected by the runtime.
    */
-  async reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
-    if (thread.isDM) return { reply: true };
-    if (message.isMention || isReplyToBot(thread, message)) {
-      return { reply: true, reaction: "👀" };
-    }
-    return { reply: false };
+  async reply(thread: Thread, message: Message<TelegramRaw>): Promise<boolean> {
+    if (thread.isDM) return true;
+    return message.isMention || isReplyToBot(thread, message);
   }
 }
 
@@ -436,6 +477,30 @@ function chatDisplayName(chat: TelegramChat | undefined): string | null {
 
 function escapeAttr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+/**
+ * MIME types we hand-roll into AI SDK `FilePart`s because chat-sdk's
+ * `attachmentToPart` (`ai.ts:122`) refuses any `file` whose mimeType isn't
+ * text-shaped. The list is intentionally narrow: only formats that frontier
+ * providers (Anthropic / Bedrock / Gemini / GPT-4o) accept inline. Adding
+ * Office docs etc. without an extraction step would just give the model
+ * unreadable bytes — wait for the per-model capability check in mnemonic/170
+ * before widening. PDF size cap (~32 MB on Anthropic) is enforced upstream
+ * by Telegram's 20 MB document limit, so no defensive check needed here.
+ */
+const INLINE_FILE_MIMETYPES = new Set(["application/pdf"]);
+
+function isInlineFileType(att: { type: string; mimeType?: string }): boolean {
+  return att.type === "file" && !!att.mimeType && INLINE_FILE_MIMETYPES.has(att.mimeType);
+}
+
+function appendParts(aiMsg: AiMessage, extras: AiMessagePart[]): AiMessage {
+  if (aiMsg.role !== "user" || extras.length === 0) return aiMsg;
+  if (typeof aiMsg.content === "string") {
+    return { role: "user", content: [{ type: "text", text: aiMsg.content }, ...extras] };
+  }
+  return { role: "user", content: [...aiMsg.content, ...extras] };
 }
 
 function prependText(aiMsg: AiMessage, prefix: string): AiMessage {
