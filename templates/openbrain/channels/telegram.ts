@@ -1,4 +1,4 @@
-import { Message, TelegramChannel, type TelegramRaw, Thread } from "openxyz/channels/telegram";
+import { Message, type ReplyAction, TelegramChannel, type TelegramRaw, Thread } from "openxyz/channels/telegram";
 import { env } from "openxyz/env";
 
 const userAllowlist = env.TELEGRAM_ALLOWLIST.describe(
@@ -51,11 +51,14 @@ export function filter(message: Message<TelegramRaw>, thread: Thread) {
 }
 
 /**
- * DMs always reply. Allowlisted groups are treated as trusted spaces — the
- * bot replies to every allowlisted user there without needing a mention.
+ * DMs always reply. Allowlisted groups are trusted spaces — the bot replies
+ * to every allowlisted user there without needing a mention. Returning a
+ * `ReplyAction` directly bypasses `TelegramChannel.reply`'s default
+ * group-dispatch (which requires `@mention` or reply-to-bot).
  */
-export async function reply(thread: Thread, message: Message<TelegramRaw>) {
-  if (!userAllowlist.has(message.author.userId)) return false;
-  if (thread.isDM) return true;
-  return groupAllowlist.has(String(message.raw.chat.id));
+export async function reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
+  if (!userAllowlist.has(message.author.userId)) return { reply: false };
+  if (thread.isDM) return { reply: true };
+  if (!groupAllowlist.has(String(message.raw.chat.id))) return { reply: false };
+  return { reply: true };
 }
