@@ -18,30 +18,6 @@ export type Thread = ChatSdkThread<{
 
 export type Message<Raw = unknown> = ChatSdkMessage<Raw>;
 
-export type ReplyAction = {
-  /**
-   * Whether the channel's `agent` should engage with this message. `true`
-   * triggers an agent turn; `false` stays silent. This is a TRIGGER signal —
-   * an allowlist of who can address the bot — not a context filter. Group
-   * chatter in lurk-mode channels is `reply: false` (don't speak) but should
-   * still flow into the agent's view when the bot is later addressed; that
-   * lives on `context`.
-   */
-  reply: boolean;
-  /**
-   * Whether this message should be included in the agent's view when an
-   * agent turn runs. Defaults to `true` — `reply: true` requires it, and
-   * `reply: false` typically still wants the message visible (group chatter
-   * the bot should overhear so it has antecedents when later @-mentioned).
-   * Set to `false` to hard-exclude — e.g. messages from non-allowlisted
-   * authors in mixed-author bursts (mnemonic/091) where another agent owns
-   * the message and we don't want it leaking into this turn's prompt.
-   */
-  context?: boolean;
-  /** Optional reaction emoji to add to the user's message — fires regardless of `reply`. */
-  reaction?: string;
-};
-
 /**
  * Abstract base class for channel adapters. Concrete adapters shipped by
  * `openxyz` (e.g. `TelegramChannel`) extend this; template channel files
@@ -129,13 +105,16 @@ export abstract class Channel<Raw = unknown> {
   abstract toModelMessages(thread: Thread, messages: Message<Raw>[]): Promise<ModelMessage[]>;
 
   /**
-   * Decide whether to engage with this incoming message and what reaction
-   * (if any) to ack with. `reply: false` keeps the channel silent for this
-   * message; `reply: true` adds it to the burst the channel's `agent` will
-   * process. Templates with allowlists / gate checks override this and call
-   * `super.reply(thread, message)` once their checks pass.
+   * Decide whether to engage with this incoming message. `false` keeps the
+   * channel silent; `true` adds the message to the burst the channel's
+   * `agent` will process. Templates with allowlists / gate checks override
+   * this and call `super.reply(thread, message)` once their checks pass.
+   *
+   * Reactions are auto-managed by the runtime — when this returns `true`
+   * and the thread is non-DM, an `👀` ack is fired before the LLM turn
+   * starts (see `OpenXyz.onMessage`). DMs never auto-react.
    */
-  abstract reply(thread: Thread, message: Message<Raw>): Promise<ReplyAction>;
+  abstract reply(thread: Thread, message: Message<Raw>): Promise<boolean>;
 
   /**
    * Return the `Session` the agent should read/write for this incoming
@@ -207,17 +186,11 @@ export abstract class Channel<Raw = unknown> {
    * Cold-start (no marker yet) falls back to the legacy bot-stop so existing
    * threads behave as before until a triggered turn writes the marker.
    *
-   * Hard cap at `RECENT_MESSAGES_CAP` either way. Each candidate runs
-   * through `this.reply()` and is dropped if the policy returns
-   * `context: false` — so the same allowlist / permission logic that gated
-   * the message originally still applies on cache-walk (mnemonic/091).
-   * Refreshes once if the cache is empty (cold start). Returns chronological
-   * order.
-   *
-   * `reply()` must be a pure policy decision (no side effects) — backfill
-   * re-invokes it on historical messages. Tight cap and bot-cut keep the
-   * prompt-inject surface small. Override to tighten (DM no-op,
-   * same-author only) or widen. Override returning `[]` opts out entirely.
+   * Hard cap at `RECENT_MESSAGES_CAP`. Refreshes once if the cache is empty
+   * (cold start). Returns chronological order. No per-candidate policy
+   * filtering — every recent message in scope is included so the agent
+   * sees the conversation as it actually happened. Override to tighten (DM
+   * no-op, same-author only) or widen; return `[]` to opt out entirely.
    */
   async recentMessages(thread: Thread, incoming: Message<Raw>[]): Promise<Message<Raw>[]> {
     if (incoming.length === 0) return [];
@@ -257,15 +230,7 @@ export abstract class Channel<Raw = unknown> {
       if (candidates.length >= RECENT_MESSAGES_CAP) break;
     }
 
-    // Apply the same `reply()` policy that gates fresh messages — `context:
-    // false` excludes a candidate from the prompt (allowlist / guest-message
-    // gating, mnemonic/091). `reply: true` and the default both flow through.
-    const decisions = await Promise.all(
-      candidates.map(async (m) => ({ message: m, action: await this.reply(thread, m) })),
-    );
-    const included = decisions.filter((d) => d.action.context !== false).map((d) => d.message);
-
-    return included.reverse();
+    return candidates.reverse();
   }
 }
 
@@ -277,10 +242,7 @@ export abstract class Channel<Raw = unknown> {
  */
 const RECENT_MESSAGES_CAP = 10;
 
-export type ReplyFunc<Raw = unknown> = (
-  thread: Thread,
-  message: Message<Raw>,
-) => boolean | Promise<boolean> | ReplyAction | Promise<ReplyAction>;
+export type ReplyFunc<Raw = unknown> = (thread: Thread, message: Message<Raw>) => boolean | Promise<boolean>;
 
 /**
  * Whether a session is keyed to the chat-sdk thread (one session per

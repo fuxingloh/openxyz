@@ -2,26 +2,21 @@ import { Channel, type ReplyFunc } from "@openxyz/runtime/channels";
 
 /**
  * Validate and return the default-exported `Channel` instance from a channel
- * module, applying any sibling `agent`/`reply` exports on top.
- * Template glue — `openxyz start` calls this after dynamic-import, `openxyz
- * build` code-gens a call into the bundled entrypoint. Lives in the facade
+ * module, applying any sibling `agent`/`reply` exports on top. Template glue
+ * — `openxyz start` calls this after dynamic-import. Lives in the facade
  * because the two-style convention (subclass vs sibling-exports) is a
  * template contract, not a runtime primitive.
  *
  * Two template styles are supported and can be mixed:
- * 1. **Subclass** — define `class MyX extends TelegramChannel`, override
- *    `reply`/... and/or set `this.agent = "..."` in the constructor.
- *    `export default new MyX(...)`. Can use `super.reply(...)` / `this` to
- *    compose with the parent class.
+ * 1. **Subclass** — `class MyX extends TelegramChannel`, override `reply`
+ *    and/or set `this.agent = "..."` in the constructor. `export default
+ *    new MyX(...)`. Use `super.reply(...)` to defer to the parent's default.
  * 2. **Sibling exports** — `export default new TelegramChannel(...)` plus
- *    `export function reply(...)`, and optionally `export const agent = "..."`
- *    or `export function agent()`. `agent` is resolved once at load time and
- *    pinned on the channel — agent routing is channel-wide, never per
- *    message. The sibling `reply` can return `boolean` (true → default,
- *    false → silent) or a full `ReplyAction`.
- *    Siblings are plain module functions, **not** class methods — no `this`,
- *    no `super`. Use `true` from `reply` to fall through to the default
- *    dispatch; for anything richer, switch to the subclass style.
+ *    `export function reply(thread, message): boolean`, and optionally
+ *    `export const agent = "..."`. The sibling reply IS the answer; it
+ *    does not fall through to the channel's default. Templates that want
+ *    the default's behavior should call into it explicitly via the
+ *    subclass style.
  *
  * When both are present, sibling exports win (applied on top of the instance).
  */
@@ -51,15 +46,8 @@ export function loadChannel(mod: any, filename: string): Channel {
     if (typeof mod.reply !== "function") {
       throw new Error(`[openxyz] channels/${filename} \`reply\` export is not a function`);
     }
-    const defaultReply = channel.reply.bind(channel);
     const userReply = mod.reply as ReplyFunc;
-    channel.reply = async (thread, message) => {
-      const result = await userReply(thread, message);
-      if (typeof result === "boolean") {
-        return result ? defaultReply(thread, message) : { reply: false };
-      }
-      return result;
-    };
+    channel.reply = async (thread, message) => Boolean(await userReply(thread, message));
   }
 
   return channel;

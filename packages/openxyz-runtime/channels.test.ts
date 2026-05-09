@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Adapter as ChatSdkAdapter, Message as ChatSdkMessage } from "chat";
-import { Channel, estimateTokens, Session, type Message, type ReplyAction, type Thread } from "./channels.ts";
+import { Channel, estimateTokens, Session, type Message, type Thread } from "./channels.ts";
 
 type StateStore = { session?: ModelMessage[] } | null;
 
@@ -289,19 +289,14 @@ describe("Session.replace", () => {
 
 class TestChannel extends Channel<unknown> {
   readonly adapter = {} as ChatSdkAdapter;
-  // Per-author policy — `excluded` user ids return `context: false`.
-  constructor(private readonly excluded: Set<string> = new Set()) {
-    super();
-  }
   async getSystemMessage(): Promise<SystemModelMessage> {
     return { role: "system", content: "" };
   }
   async toModelMessages(_thread: Thread, _messages: Message[]): Promise<ModelMessage[]> {
     return [];
   }
-  async reply(_thread: Thread, message: Message): Promise<ReplyAction> {
-    if (this.excluded.has(message.author.userId)) return { reply: false, context: false };
-    return { reply: false };
+  async reply(_thread: Thread, _message: Message): Promise<boolean> {
+    return false;
   }
 }
 
@@ -481,18 +476,6 @@ describe("Channel.backfill", () => {
     const ch = new TestChannel();
     const res = await ch.recentMessages(makeThreadWithRecent(recent), [chatMsg({ id: "trigger", isMe: false })]);
     expect(res).toEqual([]);
-  });
-
-  test("excludes candidates whose reply() returned context: false (allowlist gating)", async () => {
-    const recent = [
-      chatMsg({ id: "u1", isMe: false, dateSent: 1 }),
-      chatMsg({ id: "guest", isMe: false, dateSent: 2 }),
-      chatMsg({ id: "u3", isMe: false, dateSent: 3 }),
-      chatMsg({ id: "trigger", isMe: false, dateSent: 4 }),
-    ];
-    const ch = new TestChannel(new Set(["guest"]));
-    const res = await ch.recentMessages(makeThreadWithRecent(recent), [chatMsg({ id: "trigger", isMe: false })]);
-    expect(res.map((m) => m.id)).toEqual(["u1", "u3"]);
   });
 
   test("fail-open if refresh throws — returns empty without throwing", async () => {

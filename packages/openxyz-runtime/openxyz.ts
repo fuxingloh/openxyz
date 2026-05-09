@@ -236,30 +236,23 @@ export class OpenXyz {
     );
 
     const actions = await Promise.all(
-      incoming.map(async (message) => {
-        const action = await channel.reply(thread, message);
-        return {
-          message: message,
-          reply: action.reply,
-          context: action.context,
-          reaction: action.reaction,
-        };
-      }),
+      incoming.map(async (message) => ({ message, reply: await channel.reply(thread, message) })),
     );
 
-    // Reactions fire per-message regardless of `reply` — a template can
-    // ack with `{ reply: false, reaction: "👀" }` to say "I see you, not
-    // engaging." Fire-and-forget; a single failed reaction can't block
-    // the turn.
-    for (const { message: m, reaction } of actions) {
-      if (!reaction) continue;
-      thread.adapter
-        .addReaction(thread.id, m.id, reaction)
-        .catch((err) => console.warn("[openxyz] addReaction failed", err));
+    // Auto-ack in groups: every `reply: true` message in a non-DM thread
+    // gets an `👀` reaction so the user sees the bot acknowledged before
+    // the LLM turn finishes. DMs skip it (typing indicator is enough,
+    // reactions in 1:1 feel weird). Fire-and-forget; one failed reaction
+    // can't block the turn, and adapters without reaction support no-op.
+    if (!thread.isDM) {
+      for (const { message: m, reply } of actions) {
+        if (!reply) continue;
+        thread.adapter
+          .addReaction(thread.id, m.id, "👀")
+          .catch((err) => console.warn("[openxyz] addReaction failed", err));
+      }
     }
 
-    // `reply` is the trigger signal — does this message cause an agent turn?
-    // No reply=true messages → nobody asked the bot to engage, stay silent.
     if (!actions.some((a) => a.reply)) {
       console.info(
         `[openxyz] onMessage no-reply thread=${thread.id} actions=${actions.length} (none returned reply: true)`,
@@ -271,20 +264,18 @@ export class OpenXyz {
     // Fire-and-forget; a single failed call can't block the turn.
     thread.startTyping().catch((err) => console.warn("[openxyz] startTyping failed", err));
 
-    // `context` is the visibility signal — separate from `reply`. Defaults to
-    // `true` so group chatter the bot is overhearing flows into the prompt
-    // when it later gets @-mentioned. `reply: true` always implies context;
-    // templates set `context: false` only for hard exclusion (allowlist
-    // gating, mnemonic/091).
-    const burst = actions.filter((a) => a.reply || a.context !== false).map((a) => a.message);
+    // The burst is the messages the agent will actually engage with —
+    // those whose policy returned `true`. Lurkers (`reply: false`) are
+    // dropped from the burst; they re-enter via `recentMessages` backfill
+    // below as antecedent context.
+    const burst = actions.filter((a) => a.reply).map((a) => a.message);
 
     // Prior-context backfill (mnemonic/106). The burst above only covers
     // messages that arrived inside the queue-debounce window — earlier user
-    // messages that fired tier handlers but returned `reply: false` never
-    // made it into the session. `channel.recentMessages` walks
-    // `thread.recentMessages` back to the bot's last reply and re-applies
-    // `reply()`'s `context` policy, prepending the antecedents that should
-    // be visible. Fail-open.
+    // messages that fired tier handlers but returned `false` never made it
+    // into the session. `channel.recentMessages` walks `thread.recentMessages`
+    // back to the previous dispatch's high-water mark and prepends the
+    // antecedents. Fail-open.
     const prior = await channel.recentMessages(thread, incoming).catch((err) => {
       console.warn("[openxyz] channel.recentMessages failed", err);
       return [];

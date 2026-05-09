@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Adapter as ChatSdkAdapter, Message as ChatSdkMessage } from "chat";
-import { Channel, type Message, type ReplyAction, type Thread } from "./channels.ts";
+import { Channel, type Message, type Thread } from "./channels.ts";
 import { formatLoadError, OpenXyz } from "./openxyz.ts";
 
 class FakeChannel extends Channel {
@@ -9,7 +9,7 @@ class FakeChannel extends Channel {
     name: "fake",
     addReaction: async () => {},
   } as unknown as ChatSdkAdapter;
-  override reply = mock(async (_thread: Thread, _message: Message): Promise<ReplyAction> => ({ reply: false }));
+  override reply = mock(async (_thread: Thread, _message: Message): Promise<boolean> => false);
 
   async getSystemMessage(_thread: Thread): Promise<SystemModelMessage> {
     return { role: "system", content: "" };
@@ -86,7 +86,7 @@ describe("OpenXyz.onMessage", () => {
 
   test("reply:true on empty-text fires dispatch with the burst", async () => {
     const channel = new FakeChannel();
-    channel.reply = mock(async () => ({ reply: true }));
+    channel.reply = mock(async () => true);
     const openxyz = makeOpenXyz(channel);
     const thread = makeThread();
     const message = makeMessage("");
@@ -103,7 +103,7 @@ describe("OpenXyz.onMessage", () => {
     // moves to the newest message id we processed. The next turn's
     // recentMessages walk uses this as the boundary instead of bot-stop.
     const channel = new FakeChannel();
-    channel.reply = mock(async () => ({ reply: true }));
+    channel.reply = mock(async () => true);
     const openxyz = makeOpenXyz(channel);
     const thread = makeThread();
     const skipped = makeMessage("first", "-1003901611420:274", new Date(1000));
