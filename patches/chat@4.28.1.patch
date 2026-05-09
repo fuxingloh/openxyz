@@ -1,8 +1,8 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 32e09eaa28f0c70659f4d9cddf945367c5d91438..e9cb01b86cd318cfb337610be3aac3a989f0bd97 100644
+index 56a9484062b0d394950b82ae53d7ca1e778e6755..bb7fe42d975ae20dd3fa0fc9fee801daf1c6636a 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -492,6 +492,12 @@ interface ChatConfig<TAdapters extends Record<string, Adapter> = Record<string,
+@@ -497,6 +497,12 @@ interface ChatConfig<TAdapters extends Record<string, Adapter> = Record<string,
       * - `'queue'` — queue the message; when the current handler finishes,
       *   process only the latest queued message with `context.skipped` containing
       *   all intermediate messages
@@ -15,7 +15,7 @@ index 32e09eaa28f0c70659f4d9cddf945367c5d91438..e9cb01b86cd318cfb337610be3aac3a9
       * - `'debounce'` — all messages start/reset a debounce timer; only the
       *   final message in a burst is processed
       * - `'concurrent'` — no locking; all messages processed in parallel
-@@ -970,7 +976,7 @@ interface LockScopeContext {
+@@ -1018,7 +1024,7 @@ interface LockScopeContext {
      threadId: string;
  }
  /** Concurrency strategy for overlapping messages on the same thread. */
@@ -24,7 +24,7 @@ index 32e09eaa28f0c70659f4d9cddf945367c5d91438..e9cb01b86cd318cfb337610be3aac3a9
  /** Fine-grained concurrency configuration. */
  interface ConcurrencyConfig {
      /** Debounce window in milliseconds (debounce strategy). Default: 1500. */
-@@ -2999,6 +3005,15 @@ declare class Chat<TAdapters extends Record<string, Adapter> = Record<string, Ad
+@@ -3222,6 +3228,15 @@ declare class Chat<TAdapters extends Record<string, Adapter> = Record<string, Ad
      private handleConcurrent;
      private acquireConcurrentSlot;
      private releaseConcurrentSlot;
@@ -41,10 +41,10 @@ index 32e09eaa28f0c70659f4d9cddf945367c5d91438..e9cb01b86cd318cfb337610be3aac3a9
       * Dispatch a message to the appropriate handler chain based on
       * subscription status, mention detection, and pattern matching.
 diff --git a/dist/index.js b/dist/index.js
-index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb30667377 100644
+index 09ac37688e590d1ae652d392e50ea3d3b3e1bf88..c23a813a5493aecf6d43f73602c9714efe010e12 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1904,6 +1904,7 @@ function reviver(_key, value) {
+@@ -2229,6 +2229,7 @@ function parseDuration(value) {
  
  // src/chat.ts
  var DEFAULT_LOCK_TTL_MS = 3e4;
@@ -52,7 +52,7 @@ index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb
  function sleep(ms) {
    return new Promise((resolve) => setTimeout(resolve, ms));
  }
-@@ -3158,7 +3159,7 @@ var Chat = class {
+@@ -3583,7 +3584,7 @@ var Chat = class {
        await this.handleConcurrent(adapter, threadId, message);
        return;
      }
@@ -61,7 +61,7 @@ index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb
        await this.handleQueueOrDebounce(
          adapter,
          threadId,
-@@ -3207,7 +3208,7 @@ var Chat = class {
+@@ -3632,7 +3633,7 @@ var Chat = class {
        token: lock.token
      });
      try {
@@ -70,7 +70,7 @@ index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb
      } finally {
        await this._stateAdapter.releaseLock(lock);
        this.logger.debug("Lock released", { threadId, lockKey });
-@@ -3277,8 +3278,27 @@ var Chat = class {
+@@ -3702,8 +3703,27 @@ var Chat = class {
            debounceMs
          });
          await this.debounceLoop(lock, adapter, threadId, lockKey);
@@ -99,7 +99,7 @@ index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb
          await this.drainQueue(lock, adapter, threadId, lockKey);
        }
      } finally {
-@@ -3322,7 +3342,7 @@ var Chat = class {
+@@ -3747,7 +3767,7 @@ var Chat = class {
          lockKey,
          messageId: msg.id
        });
@@ -108,7 +108,7 @@ index 9a1901e407a776b9bfdfc05113295f1722b1ecde..ba5a03d6e854cd85142a560b0f0942bb
        break;
      }
    }
-@@ -3369,7 +3389,46 @@ var Chat = class {
+@@ -3794,7 +3814,46 @@ var Chat = class {
          skipped,
          totalSinceLastHandler: pending.length
        };
