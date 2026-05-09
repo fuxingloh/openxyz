@@ -1,4 +1,4 @@
-import { Message, type ReplyAction, TelegramChannel, type TelegramRaw, type Thread } from "openxyz/channels/telegram";
+import { isReplyToBot, Message, TelegramChannel, type TelegramRaw, type Thread } from "openxyz/channels/telegram";
 import { env } from "openxyz/env";
 
 const userAllowlist = env.TELEGRAM_ALLOWLIST.describe(
@@ -35,31 +35,21 @@ export default new TelegramChannel({
 });
 
 /**
- * Single policy gate — runs both for fresh messages and for recent-message
- * backfill (`Channel.recentMessages` in `@openxyz/runtime/channels.ts`),
- * so `context: false` here also keeps strangers out of the backfill prompt.
- *
- * Allowlisted groups are trusted spaces — the bot replies to every
- * allowlisted user there without needing a mention. Returning a
- * `ReplyAction` directly bypasses `TelegramChannel.reply`'s default
- * group-dispatch (which requires `@mention` or reply-to-bot).
- *
- * `message.raw.chat.id` is the bare Telegram chat ID (negative for groups);
- * `thread.channel.id` is chat-sdk's `telegram:<chatId>` form, so go through
- * raw to compare with the env allowlist.
+ * Trigger gate. `true` engages an agent turn; `false` stays silent. Lurkers
+ * (`false`) still flow into the agent's view via `Channel.recentMessages`
+ * backfill, so don't worry about "should this be visible" here. Group
+ * `👀` ack on reply is auto-fired by the runtime. `message.raw.chat.id`
+ * is the bare Telegram chat ID; `thread.channel.id` is chat-sdk's
+ * `telegram:<chatId>` form.
  */
-export async function reply(thread: Thread, message: Message<TelegramRaw>): Promise<ReplyAction> {
-  if (thread.isDM) {
-    // In DM, only allowed user.
-    if (userAllowlist.has(message.author.userId)) return { reply: true };
-    return { reply: false };
+export function reply(thread: Thread, message: Message<TelegramRaw>): boolean {
+  // DM: only allowed user.
+  if (thread.isDM) return userAllowlist.has(message.author.userId);
+  // Whitelisted group: reply to anyone, mention-free.
+  if (groupAllowlist.has(String(message.raw.chat.id))) return true;
+  // Other group: only allowlisted user, only when addressed.
+  if (userAllowlist.has(message.author.userId)) {
+    return message.isMention || isReplyToBot(thread, message);
   }
-  // In Whitelisted Group, anyone
-  if (groupAllowlist.has(String(message.raw.chat.id))) {
-    return { reply: true };
-  }
-  // Non-whitelisted Group, only allowlisted user
-  if (userAllowlist.has(message.author.userId)) return { reply: true };
-  // But context will be added
-  return { reply: false, context: true };
+  return false;
 }
