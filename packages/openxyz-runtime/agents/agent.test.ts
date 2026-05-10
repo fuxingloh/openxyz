@@ -188,19 +188,49 @@ describe("hardTruncate", () => {
     expect(hasOrphanTool).toBe(false);
   });
 
-  test("can return empty when even the newest message exceeds budget", () => {
-    // Pair-safe snap can push past end if the tail is all tool messages.
+  test("never returns empty when input is non-empty", () => {
+    // Pair-safe snap could push past end if the tail is all tool messages.
+    // Invariant: keep at least the last user message — empty messages array
+    // 400s every provider (Bedrock: "A conversation must start with a user
+    // message").
     const msgs = [userMsg("big"), assistantToolCall("t1", "bash"), toolResult("t1", "bash", "x")];
     const out = hardTruncate(msgs, 1); // impossibly tight
-    // Acceptable either to return empty or a minimal safe suffix.
-    // Invariant: no orphan tool at the front.
+    expect(out.length).toBeGreaterThan(0);
     expect(out[0]?.role).not.toBe("tool");
   });
 
-  test("budget of 0 still respects pair safety", () => {
+  test("budget of 0 still respects pair safety and keeps a user turn", () => {
     const msgs = [userMsg("a"), assistantToolCall("t1", "bash"), toolResult("t1", "bash", "x")];
     const out = hardTruncate(msgs, 0);
+    expect(out.length).toBeGreaterThan(0);
     expect(out[0]?.role).not.toBe("tool");
+  });
+
+  test("shrinks oversized FilePart to a text stub rather than dropping the turn", () => {
+    // Single user message whose `FilePart` (e.g. a 16 MB PDF inlined per
+    // mnemonic/170) blows the budget on its own. The whole-message drop loop
+    // can't help — shrink heavy parts in place.
+    const heavy = "x".repeat(10_000); // ~2.5K tokens by bytes/4
+    const msg: ModelMessage = {
+      role: "user",
+      content: [
+        { type: "text", text: "look at this" },
+        { type: "file", data: heavy, mediaType: "application/pdf", filename: "deck.pdf" },
+      ],
+    };
+    const out = hardTruncate([msg], 100);
+    expect(out.length).toBe(1);
+    expect(out[0]!.role).toBe("user");
+    const content = out[0]!.content;
+    expect(Array.isArray(content)).toBe(true);
+    if (Array.isArray(content)) {
+      expect(content.every((p) => p.type === "text")).toBe(true);
+      const stub = content.find((p) => p.type === "text" && /elided/.test((p as { text: string }).text)) as
+        | { text: string }
+        | undefined;
+      expect(stub).toBeDefined();
+      expect(stub!.text).toMatch(/deck\.pdf/);
+    }
   });
 });
 

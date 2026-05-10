@@ -160,11 +160,27 @@ export class TelegramChannel extends Channel<TelegramRaw> {
         for (const att of msg.attachments ?? []) {
           if (!isInlineFileType(att)) continue;
           if (!att.fetchData) continue;
+          // Defensive cap before download: Bedrock Converse rejects Document
+          // payloads above 4.5 MB raw, and even smaller PDFs balloon the
+          // session log past every model's input window once base64-encoded
+          // (`estimateTokens = bytes/4` over the base64 string). Telegram's
+          // 20 MB document ceiling is well past both walls. Substitute a
+          // text stub so the agent sees the attachment landed and can ask
+          // the user to resend a smaller version.
+          const declared = (att as { size?: number }).size;
+          if (typeof declared === "number" && declared > MAX_INLINE_FILE_BYTES) {
+            built.push(oversizeStub(att, declared));
+            continue;
+          }
           const buf = await att.fetchData().catch((err) => {
             console.warn(`[telegram] inline-file fetchData failed for ${att.name ?? att.type} — skipping`, err);
             return null;
           });
           if (!buf) continue;
+          if (buf.length > MAX_INLINE_FILE_BYTES) {
+            built.push(oversizeStub(att, buf.length));
+            continue;
+          }
           built.push({
             type: "file",
             data: `data:${att.mimeType};base64,${buf.toString("base64")}`,
@@ -486,13 +502,31 @@ function escapeAttr(v: string): string {
  * providers (Anthropic / Bedrock / Gemini / GPT-4o) accept inline. Adding
  * Office docs etc. without an extraction step would just give the model
  * unreadable bytes — wait for the per-model capability check in mnemonic/170
- * before widening. PDF size cap (~32 MB on Anthropic) is enforced upstream
- * by Telegram's 20 MB document limit, so no defensive check needed here.
+ * before widening.
  */
 const INLINE_FILE_MIMETYPES = new Set(["application/pdf"]);
 
+/**
+ * Hard cap on raw bytes we'll inline as a `FilePart`. Bedrock Converse rejects
+ * Document payloads above 4.5 MB with a 400 — Anthropic's direct Messages API
+ * accepts up to ~32 MB but the Bedrock wrap is the wall we deploy behind.
+ * Files above the cap balloon the base64-encoded session log past every
+ * model's input window (`estimateTokens = bytes/4` over the base64 string,
+ * see `agents/agent.ts`); `hardTruncate` falls back to a text stub if it
+ * has to, but stripping upstream avoids the whole compaction round-trip.
+ */
+const MAX_INLINE_FILE_BYTES = 4_500_000;
+
 function isInlineFileType(att: { type: string; mimeType?: string }): boolean {
   return att.type === "file" && !!att.mimeType && INLINE_FILE_MIMETYPES.has(att.mimeType);
+}
+
+function oversizeStub(att: { name?: string; mimeType?: string }, bytes: number): AiMessagePart {
+  const label = att.name ?? att.mimeType ?? "file";
+  return {
+    type: "text",
+    text: `[attached ${label} (${bytes} bytes) skipped — over ${MAX_INLINE_FILE_BYTES}-byte inline limit; ask user to resend a smaller version or extract relevant pages]`,
+  };
 }
 
 /**

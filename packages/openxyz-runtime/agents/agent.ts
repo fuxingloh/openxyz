@@ -672,6 +672,14 @@ function hasToolCalls(msg: ModelMessage): boolean {
  * snap forward to a safe boundary. Used when compaction itself can't shrink
  * the prompt enough (runaway guard) or the compact agent errors mid-turn.
  *
+ * Invariant: non-empty input → non-empty output. The whole-message drop loop
+ * can't deflate a single oversized message (a `FilePart` with raw bytes
+ * easily blows past any sane budget on its own); when that happens, shrink
+ * the surviving message's heavy parts to text stubs in place rather than
+ * returning `[]`. An empty prompt 400s every provider — `messages: []`
+ * against Bedrock surfaces as "A conversation must start with a user
+ * message" and the turn dies silently.
+ *
  * Exported for testing — treat as internal.
  */
 export function hardTruncate(messages: ModelMessage[], budgetTokens: number): ModelMessage[] {
@@ -679,9 +687,64 @@ export function hardTruncate(messages: ModelMessage[], budgetTokens: number): Mo
   const sizes = messages.map((m) => Math.ceil(JSON.stringify(m).length / 4));
   let total = sizes.reduce((a, b) => a + b, 0);
   let i = 0;
-  while (i < messages.length && total > budgetTokens) {
+  // Stop one short of the end — at least one message must survive so the
+  // provider has a user turn to respond to.
+  while (i < messages.length - 1 && total > budgetTokens) {
     total -= sizes[i]!;
     i++;
   }
-  return messages.slice(safeBoundary(messages, i));
+  let result = messages.slice(safeBoundary(messages, i));
+  // safeBoundary can advance to messages.length when the only candidates
+  // left are tool-results without their assistant call. Fall back to the
+  // last user message — the minimum the provider will accept.
+  if (result.length === 0) {
+    const lastUser = lastUserIdx(messages);
+    result = lastUser >= 0 ? [messages[lastUser]!] : messages.slice(-1);
+  }
+  if (estimateTokens(result) <= budgetTokens) return result;
+  // Still over budget — single oversized message, almost always a `FilePart`
+  // with inline bytes (mnemonic/170 PDF passthrough). Shrink heavy parts to
+  // text stubs so the model still sees a turn it can respond to.
+  return result.map(shrinkHeavyParts);
+}
+
+function lastUserIdx(messages: ModelMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") return i;
+  }
+  return -1;
+}
+
+/**
+ * Replace `FilePart` / `ImagePart` payloads on a single message with text
+ * stubs that name what was elided. Pure text messages are returned as-is —
+ * truncating prose mid-sentence loses meaning the way dropping a binary
+ * blob doesn't.
+ */
+function shrinkHeavyParts(message: ModelMessage): ModelMessage {
+  if (typeof message.content === "string") return message;
+  if (!Array.isArray(message.content)) return message;
+  const next = message.content.map((part) => {
+    if (part.type === "file") {
+      const bytes = dataBytes((part as { data: unknown }).data);
+      const label = (part as { filename?: string }).filename ?? (part as { mediaType?: string }).mediaType ?? "file";
+      return {
+        type: "text" as const,
+        text: `[${label} elided — ${bytes} bytes; re-attach if you need it]`,
+      };
+    }
+    if (part.type === "image") {
+      const bytes = dataBytes((part as { image: unknown }).image);
+      return { type: "text" as const, text: `[image elided — ${bytes} bytes; re-attach if you need it]` };
+    }
+    return part;
+  });
+  return { ...message, content: next } as ModelMessage;
+}
+
+function dataBytes(data: unknown): number {
+  if (typeof data === "string") return data.length;
+  if (data instanceof Uint8Array) return data.byteLength;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  return JSON.stringify(data ?? null).length;
 }
