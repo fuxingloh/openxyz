@@ -96,6 +96,20 @@ export abstract class Channel<Raw = unknown> {
    *   `mimeType` starts with `image/` as `att.type === "image"` before
    *   calling `toAiMessages` — that routes it through the working image
    *   branch.
+   * - **Non-text-mime files (PDFs etc.) silently dropped** (OXYZ-103):
+   *   same gate at `ai.ts:122` rejects every `att.type === "file"` whose
+   *   mimeType isn't text-shaped. PDFs vanish without `onUnsupportedAttachment`
+   *   ever firing (that path is reserved for `video`/`audio`). **Workaround:**
+   *   pre-fetch via `att.fetchData()`, build the `FilePart` ourselves with
+   *   `mediaType: att.mimeType`, and inject through `transformMessage`. Whitelist
+   *   what the active model accepts inline; everything else needs the extract
+   *   path (OXYZ-104, mnemonic/170).
+   * - **Bedrock Converse strict document filenames** (mnemonic/170): the
+   *   wrap around Anthropic's Messages API rejects any `filename` outside
+   *   `[a-zA-Z0-9 \-()\[\]]` or with consecutive whitespace, surfacing as
+   *   `NoOutputGeneratedError`. **Workaround:** sanitize `att.name` before
+   *   passing it as `filename` — strip non-allowed chars, collapse runs,
+   *   fall back to a generic name when fully stripped.
    *
    * See `packages/openxyz-provider-telegram/channel.ts` for a reference
    * implementation of all three workarounds. Grep `mnemonic/143` to find
