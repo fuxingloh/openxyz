@@ -357,7 +357,35 @@ export class Agent {
       // rendering (Telegram: split on `finish-step` per mnemonic/104, render
       // mdast `Table` nodes as inline PNGs, re-fire typing per bubble per
       // mnemonic/100) override `postFullStream`. Runtime stays adapter-agnostic.
-      await channel.postFullStream(thread, result.fullStream);
+      //
+      // Post failures (e.g. Telegram rejects markdown with `can't parse
+      // entities` when the model emits malformed syntax across a step
+      // boundary) are isolated from LLM/stream errors. If posting throws,
+      // we surface a visible notice, then drain the rest of `result.fullStream`
+      // ourselves so `result.response` can resolve and `session.append` still
+      // runs — otherwise the turn is lost and the next message re-renders
+      // from a stale session, producing the same failure forever.
+      try {
+        await channel.postFullStream(thread, result.fullStream);
+      } catch (postErr) {
+        console.warn(`[openxyz] channel.postFullStream failed — surfacing notice and draining`, postErr);
+        const postMsg = postErr instanceof Error ? postErr.message : String(postErr);
+        await thread
+          .post({ raw: `⚠️ Error generating reply: ${postMsg}` })
+          .catch((e) => console.error("[openxyz] notice post failed", e));
+        try {
+          for await (const _ of result.fullStream) {
+            // swallow — AI SDK still resolves `response`/`messages` from
+            // internal buffering, but iterating to completion guarantees it.
+          }
+        } catch (drainErr) {
+          const drainMsg = drainErr instanceof Error ? drainErr.message : String(drainErr);
+          console.error("[openxyz] stream drain after post failure also failed", drainErr);
+          await thread
+            .post({ raw: `⚠️ Cleanup error: ${drainMsg}` })
+            .catch((e) => console.error("[openxyz] cleanup notice post failed", e));
+        }
+      }
       const response = await result.response;
       await session.append(response.messages as ModelMessage[]);
     } catch (err) {

@@ -269,18 +269,11 @@ export class TelegramChannel extends Channel<TelegramRaw> {
       const segments = ast ? splitTablesFromAst(ast) : [{ kind: "md" as const, text }];
 
       if (segments.length === 1 && segments[0]!.kind === "md") {
-        const md = segments[0]!.text;
-        console.log(`[telegram-debug] post len=${md.length} thread=${thread.id}\n---BEGIN---\n${md}\n---END---`);
-        await thread.post({ markdown: md });
+        await thread.post({ markdown: segments[0]!.text });
       } else {
         for (const seg of segments) {
           if (seg.kind === "md") {
-            if (seg.text) {
-              console.log(
-                `[telegram-debug] post (split) len=${seg.text.length} thread=${thread.id}\n---BEGIN---\n${seg.text}\n---END---`,
-              );
-              await thread.post({ markdown: seg.text });
-            }
+            if (seg.text) await thread.post({ markdown: seg.text });
             continue;
           }
           try {
