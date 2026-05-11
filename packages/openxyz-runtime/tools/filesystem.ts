@@ -75,7 +75,23 @@ export class FilesystemTools {
     }
 
     const fs = new MountableFs({ mounts: configs });
-    this.#bash = new Bash({ fs, cwd: "/workspace", python: true, javascript: true });
+    this.#bash = new Bash({
+      fs,
+      cwd: "/workspace",
+      python: true,
+      javascript: true,
+      // Enables built-in `curl` / `wget` in just-bash. Skills that document
+      // `curl -H "Authorization: …"` (TranscriptAPI, OpenAI direct, etc.)
+      // need this — the agent has no host shell to fall back to.
+      // `dangerouslyAllowFullInternetAccess` skips the allow-list and the
+      // GET/HEAD-only method default. `denyPrivateRanges` blocks loopback /
+      // RFC1918 / link-local so the bash sandbox can't probe the deployment's
+      // metadata service or sibling internal containers.
+      network: {
+        dangerouslyAllowFullInternetAccess: true,
+        denyPrivateRanges: true,
+      },
+    });
   }
 
   tools(): Record<string, Tool> {
