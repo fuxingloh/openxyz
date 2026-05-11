@@ -9,3 +9,4 @@ pnpm-lock.yaml
 .openxyz
 # local env files
 .env*.local
+.vercel
