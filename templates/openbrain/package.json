@@ -6,8 +6,8 @@
     "start": "openxyz start"
   },
   "dependencies": {
-    "@ai-sdk/google": "3.0.64",
-    "@ai-sdk/xai": "3.0.83",
+    "@ai-sdk/google": "3.0.72",
+    "@ai-sdk/xai": "3.0.89",
     "@openxyz-provider/github": "workspace:*",
     "ai": "catalog:",
     "openxyz": "workspace:*"
