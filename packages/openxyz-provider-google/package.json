@@ -13,7 +13,7 @@
   ],
   "dependencies": {
     "@openxyz/runtime": "workspace:*",
-    "just-bash": "^2",
+    "just-bash": "^3",
     "just-bash-gdrive": "^0.1.3"
   },
   "devDependencies": {

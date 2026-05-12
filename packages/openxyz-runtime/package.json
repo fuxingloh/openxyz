@@ -10,7 +10,7 @@
     "@tursodatabase/database": "^0.5.3",
     "@tursodatabase/serverless": "^1.1.2",
     "chat": "catalog:",
-    "just-bash": "^2",
+    "just-bash": "^3",
     "turndown": "^7.2.4",
     "zod": "^4"
   },
