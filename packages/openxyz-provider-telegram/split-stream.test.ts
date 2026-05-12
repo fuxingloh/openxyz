@@ -43,10 +43,14 @@ describe("splitOnFinishStep", () => {
     expect(bubbles[1]!.find((e) => e.type === "text-delta")?.text).toBe("second");
   });
 
-  test("step with only tool-calls (no text) is skipped", async () => {
+  test("step with only tool-calls yields a textless substream", async () => {
+    // Emit-immediate: every step is yielded as a substream, including ones
+    // with no text-delta. The consumer drops textless ones via
+    // `if (!text) continue` after `collectTextDeltas` returns "".
     const bubbles = await collectBubbles([toolCall(), finishStep(), toolResult(), text("answer"), finishStep()]);
-    expect(bubbles).toHaveLength(1);
-    expect(bubbles[0]!.find((e) => e.type === "text-delta")?.text).toBe("answer");
+    expect(bubbles).toHaveLength(2);
+    expect(bubbles[0]!.find((e) => e.type === "text-delta")).toBeUndefined();
+    expect(bubbles[1]!.find((e) => e.type === "text-delta")?.text).toBe("answer");
   });
 
   test("text-then-tool-call within a step keeps the bubble", async () => {
@@ -70,9 +74,11 @@ describe("splitOnFinishStep", () => {
     expect(bubbles).toHaveLength(0);
   });
 
-  test("stream of only tool-calls yields nothing", async () => {
+  test("stream of only tool-calls yields textless substreams", async () => {
+    // Emit-immediate: one substream per step regardless of contents.
     const bubbles = await collectBubbles([toolCall(), finishStep(), toolCall(), finishStep()]);
-    expect(bubbles).toHaveLength(0);
+    expect(bubbles).toHaveLength(2);
+    for (const b of bubbles) expect(b.find((e) => e.type === "text-delta")).toBeUndefined();
   });
 
   test("stream error after publish surfaces on iterator", async () => {

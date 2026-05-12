@@ -1,8 +1,7 @@
 /**
- * Split an AI SDK `fullStream` into substreams, one per LLM step that
- * produced text. Each yielded substream replays the step's events so the
- * consumer can pipe each into a separate `thread.post()` call — one chat
- * bubble per step.
+ * Split an AI SDK `fullStream` into substreams, one per LLM step. Each
+ * yielded substream replays the step's events so the consumer can pipe
+ * each into a separate `thread.post()` call — one chat bubble per step.
  *
  * Why `finish-step`: it's exactly where chat-sdk's `fromFullStream` already
  * inserts a `"\n\n"` separator (../chat/packages/chat/src/from-full-stream.ts:67).
@@ -10,12 +9,11 @@
  * information loss — `fromFullStream` drops every event except `text-delta`
  * anyway, so tool-call events were never visible.
  *
- * Streaming preserved: the segment publishes to the consumer on its first
- * `text-delta`, not on `finish-step`. Subsequent events stream through the
- * substream as they arrive, so per-bubble typing/edits keep working.
- *
- * Empty segments (steps with only tool-calls, no text) are silently
- * discarded — never yielded, so no empty bubbles get posted.
+ * Emit-immediate: the substream is published on the FIRST event of a step,
+ * not on the first `text-delta`. Consumers see events as they arrive,
+ * including the pre-text run (`start-step`, `tool-input-start`, ...). Steps
+ * with no text yield a substream that drains to nothing text-wise; the
+ * consumer drops those (`collectTextDeltas` + `if (!text) continue`).
  */
 export async function* splitOnFinishStep<T extends { type: string }>(
   stream: AsyncIterable<T>,
@@ -69,7 +67,6 @@ export async function* splitOnFinishStep<T extends { type: string }>(
   };
 
   let current: Segment | null = null;
-  let currentPublished = false;
   const pending: Segment[] = [];
   let wake: (() => void) | null = null;
   let pumpDone = false;
@@ -84,33 +81,26 @@ export async function* splitOnFinishStep<T extends { type: string }>(
     try {
       for await (const event of stream) {
         if (event.type === "finish-step") {
-          if (current && currentPublished) {
+          if (current) {
             current.push(event);
             current.end();
           }
-          // Unpublished current → discard: the step produced no text, so
-          // there's no bubble to render. Buffered non-text events drop with it.
           current = null;
-          currentPublished = false;
           continue;
         }
         if (!current) {
           current = newSegment();
-          currentPublished = false;
-        }
-        current.push(event);
-        if (!currentPublished && event.type === "text-delta") {
           pending.push(current);
-          currentPublished = true;
           pingConsumer();
         }
+        current.push(event);
       }
-      // Stream exhausted with no trailing finish-step — close any
-      // already-published segment so its iter() drains.
-      if (current && currentPublished) current.end();
+      // Stream exhausted without a trailing finish-step — close the open
+      // segment so its iter() drains.
+      if (current) current.end();
     } catch (err) {
       pumpError = err;
-      if (current && currentPublished) current.fail(err);
+      if (current) current.fail(err);
     } finally {
       pumpDone = true;
       pingConsumer();
