@@ -16,9 +16,9 @@
     "tsconfig.json"
   ],
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "4.0.96",
+    "@ai-sdk/amazon-bedrock": "4.0.104",
     "@ai-sdk/mcp": "^1.0.36",
-    "@ai-sdk/openai-compatible": "2.0.41",
+    "@ai-sdk/openai-compatible": "2.0.47",
     "@chat-adapter/state-turso": "workspace:*",
     "@openxyz-provider/telegram": "workspace:*",
     "@openxyz/runtime": "workspace:*",
