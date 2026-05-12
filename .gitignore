@@ -47,5 +47,9 @@ dist
 # openxyz
 .openxyz
 
+# claude code — per-session worktrees and local-only settings
+.claude/worktrees/
+.claude/settings.local.json
+
 # local symlink to sibling mnemonic repo (../../@openxyz-app/mnemonic)
 /mnemonic
